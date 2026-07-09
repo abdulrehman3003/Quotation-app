@@ -52,6 +52,9 @@ allowed_origins = [
     "http://admin.localhost:5174",
 ]
 
+if settings.FRONTEND_URL:
+    allowed_origins.append(settings.FRONTEND_URL)
+
 env_origins = os.getenv("CORS_ORIGINS")
 if env_origins:
     allowed_origins.extend([origin.strip() for origin in env_origins.split(",") if origin.strip()])
