@@ -36,5 +36,6 @@ class Settings(BaseSettings):
     # Server Settings
     PORT: int = 8000
     HOST: str = "127.0.0.1"  # Security: MUST listen on 127.0.0.1, not 0.0.0.0
+    FRONTEND_URL: str | None = Field(None, env="FRONTEND_URL")
 
 settings = Settings()
