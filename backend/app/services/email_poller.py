@@ -67,12 +67,14 @@ def poll_gmail_loop():
                             polled_user_ids.add(user_id)
                             poll_user_mailbox(user_id, email_addr, app_pwd)
 
-            # 2. Fallback to global GMail email from .env (assigning to the first user) if not already polled
-            if settings.GMAIL_EMAIL and settings.GMAIL_APP_PASSWORD and "your_gmail_address_here" not in settings.GMAIL_EMAIL:
+            # 2. Fallback to global GMail or admin GMail from database if not already polled
+            from app.core.credentials import get_gmail_credentials
+            fallback_email, fallback_pwd = get_gmail_credentials()
+            if fallback_email and fallback_pwd:
                 if users_res.data:
                     first_user_id = users_res.data[0]["id"]
                     if first_user_id not in polled_user_ids:
-                        poll_user_mailbox(first_user_id, settings.GMAIL_EMAIL, settings.GMAIL_APP_PASSWORD)
+                        poll_user_mailbox(first_user_id, fallback_email, fallback_pwd)
 
         except Exception as global_err:
             logger.error(f"Global GMail poller loop error: {str(global_err)}")

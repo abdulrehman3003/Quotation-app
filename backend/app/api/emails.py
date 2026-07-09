@@ -96,10 +96,15 @@ def send_smtp_email(to_address: str, subject: str, body: str, custom_user: str |
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
 
-    gmail_user = custom_user or settings.GMAIL_EMAIL
-    gmail_password = custom_password or settings.GMAIL_APP_PASSWORD
+    from app.core.credentials import get_gmail_credentials, is_placeholder
 
-    if not gmail_user or not gmail_password or "your_gmail_address_here" in (gmail_user or ""):
+    gmail_user = custom_user
+    gmail_password = custom_password
+
+    if not gmail_user or not gmail_password or is_placeholder(gmail_user) or is_placeholder(gmail_password):
+        gmail_user, gmail_password = get_gmail_credentials()
+
+    if not gmail_user or not gmail_password or is_placeholder(gmail_user) or is_placeholder(gmail_password):
         logger.warning("Gmail SMTP credentials not configured. Cannot send real email.")
         return False
 

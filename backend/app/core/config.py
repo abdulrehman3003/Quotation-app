@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str = Field(..., env="SUPABASE_JWT_SECRET")
     
     # Gemini Settings (via OpenAI SDK compatibility)
-    GEMINI_API_KEY: str = Field(..., env="GEMINI_API_KEY")
+    GEMINI_API_KEY: str | None = Field(None, env="GEMINI_API_KEY")
     OPENAI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     GEMINI_MODEL: str = "gemini-1.5-flash"  # or gemini-2.5-flash
     

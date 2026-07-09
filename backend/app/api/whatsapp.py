@@ -7,6 +7,7 @@ from app.core.security import get_current_user
 from app.core.encryption import decrypt_key
 from supabase import create_client, Client
 from app.core.config import settings
+from app.core.credentials import get_twilio_credentials, get_gemini_api_key
 import logging
 import httpx
 from openai import OpenAI
@@ -19,31 +20,10 @@ logger = logging.getLogger(__name__)
 def get_user_twilio_credentials(user_id: str):
     """
     Retrieves and decrypts the Twilio API credentials for a user.
-    Falls back to global settings if custom ones are not configured.
+    Falls back to global settings or admin panel settings if custom ones are not configured.
     """
-    try:
-        res = supabase.table("users").select(
-            "encrypted_twilio_sid",
-            "encrypted_twilio_token",
-            "encrypted_twilio_phone"
-        ).eq("id", user_id).execute()
-        
-        if res.data:
-            profile = res.data[0]
-            enc_sid = profile.get("encrypted_twilio_sid")
-            enc_token = profile.get("encrypted_twilio_token")
-            enc_phone = profile.get("encrypted_twilio_phone")
-            
-            sid = decrypt_key(enc_sid) if enc_sid else None
-            token = decrypt_key(enc_token) if enc_token else None
-            phone = decrypt_key(enc_phone) if enc_phone else None
-            
-            if sid and token and phone:
-                return sid, token, phone
-    except Exception as e:
-        logger.error(f"Failed to retrieve user Twilio credentials for {user_id}: {str(e)}")
-        
-    return settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN, settings.TWILIO_WHATSAPP_NUMBER
+    sid, token, phone = get_twilio_credentials(user_id)
+    return sid, token, phone
 
 def send_twilio_whatsapp(to_number: str, body: str, user_id: str):
     """
@@ -98,18 +78,10 @@ def generate_whatsapp_reply(message_text: str, kb_contents: List[str], user_id: 
         f"Generate a helpful WhatsApp reply:"
     )
     
-    api_key = settings.GEMINI_API_KEY
-    try:
-        res = supabase.table("users").select("encrypted_gemini_key").eq("id", user_id).execute()
-        if res.data and res.data[0].get("encrypted_gemini_key"):
-            decrypted = decrypt_key(res.data[0]["encrypted_gemini_key"])
-            if decrypted:
-                api_key = decrypted
-    except Exception as e:
-        logger.error(f"Failed to resolve custom Gemini key: {str(e)}")
+    api_key = get_gemini_api_key(user_id=user_id)
     
     try:
-        client = OpenAI(api_key=api_key, base_url=settings.OPENAI_BASE_URL)
+        client = OpenAI(api_key=api_key or "dummy-key", base_url=settings.OPENAI_BASE_URL)
         completion = client.chat.completions.create(
             model=settings.GEMINI_MODEL,
             messages=[

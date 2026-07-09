@@ -7,9 +7,11 @@ from app.schemas.pydantic_models import QuoteEngineOutput
 
 logger = logging.getLogger(__name__)
 
+from app.core.credentials import get_gemini_api_key
+
 # Initialize the OpenAI SDK client pointing to Gemini's OpenAI-compatible endpoint
 client = OpenAI(
-    api_key=settings.GEMINI_API_KEY,
+    api_key=get_gemini_api_key() or "dummy-key",
     base_url=settings.OPENAI_BASE_URL
 )
 
@@ -23,10 +25,11 @@ def run_quote_engine(
     Feeds lead raw text and business knowledge base items into the AI engine.
     Uses Gemini (via OpenAI compatibility) with structured schema verification.
     """
-    # Initialize the client dynamically if a custom API key is passed
-    api_key = custom_api_key or settings.GEMINI_API_KEY
+    # Initialize the client dynamically resolving credentials with fallback logic
+    user_id = user_profile.get("id") if user_profile else None
+    api_key = custom_api_key or get_gemini_api_key(user_id=user_id)
     openai_client = OpenAI(
-        api_key=api_key,
+        api_key=api_key or "dummy-key",
         base_url=settings.OPENAI_BASE_URL
     )
 
