@@ -74,8 +74,10 @@ def run_quote_engine(
         "5. Provide a fully structured breakdown with material cost, labor cost, and total cost.\n"
         "6. Draft a highly professional B2B response email to the lead. Use the pricing sheets and standard operating procedures "
         "found in the Knowledge Base to structure the email style and tone.\n"
-        "7. Output must conform exactly to the required JSON schema."
-        f"{signature_instructions}"
+        "7. Output must conform exactly to the required JSON schema.\n"
+        f"{signature_instructions}\n"
+        "9. NO TRAILING SPAM: Do NOT append any decorative separators, horizontal rules, or trailing hyphens/dashes "
+        "(e.g., '---' or '___') at the end of the email draft. End the email immediately after the signature."
     )
 
     user_prompt = (
@@ -101,7 +103,11 @@ def run_quote_engine(
             response_format=QuoteEngineOutput,
             temperature=0.2,
         )
-        return completion.choices[0].message.parsed
+        parsed = completion.choices[0].message.parsed
+        if parsed and parsed.email_draft:
+            import re
+            parsed.email_draft = re.sub(r'[\s\-_*=]+$', '', parsed.email_draft)
+        return parsed
         
     except Exception as e:
         logger.warning(f"Structured outputs beta endpoint failed, falling back to manual parsing. Error: {str(e)}")
@@ -121,7 +127,11 @@ def run_quote_engine(
             parsed_json = json.loads(content)
             
             # Map manually to Pydantic object
-            return QuoteEngineOutput(**parsed_json)
+            parsed = QuoteEngineOutput(**parsed_json)
+            if parsed and parsed.email_draft:
+                import re
+                parsed.email_draft = re.sub(r'[\s\-_*=]+$', '', parsed.email_draft)
+            return parsed
             
         except Exception as fallback_err:
             logger.error(f"Fallback AI generation failed: {str(fallback_err)}")
