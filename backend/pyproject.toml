@@ -1,0 +1,21 @@
+[project]
+name = "axrflows-backend"
+version = "0.1.0"
+description = "FastAPI backend for AXRFLOWS B2B SaaS automation platform"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "supabase>=2.4.0",
+    "openai>=1.14.0",
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+    "pypdf>=4.1.0",
+    "python-multipart>=0.0.9",
+    "python-jose[cryptography]>=3.3.0",
+    "cryptography>=42.0.0",
+    "imap-tools>=1.6.0"
+]
