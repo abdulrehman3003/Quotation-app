@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import { Auth } from './pages/Auth'
+import { LandingPage } from './pages/LandingPage'
 import { Dashboard } from './pages/Dashboard'
 import { PipelineWorkspace } from './pages/PipelineWorkspace'
 import { KnowledgeBase } from './pages/KnowledgeBase'
@@ -186,6 +187,9 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Landing Page Route */}
+        <Route path="/" element={<LandingPage />} />
+
         {/* Auth Route */}
         <Route path="/auth" element={<Auth />} />
 

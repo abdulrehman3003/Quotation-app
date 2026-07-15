@@ -13,11 +13,12 @@ supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVIC
 @router.post("", response_model=LeadResponse, status_code=status.HTTP_201_CREATED)
 def create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_user)):
     """
-    Creates a new lead associated with the authenticated user.
+    Creates a new lead associated with the authenticated user's company.
     """
     try:
         response = supabase.table("leads").insert({
             "user_id": current_user["id"],
+            "company_id": current_user["company_id"],
             "title": lead.title,
             "raw_text": lead.raw_text,
             "source": lead.source,
@@ -40,12 +41,12 @@ def create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_user)
 @router.get("", response_model=List[LeadResponse])
 def list_leads(current_user: dict = Depends(get_current_user)):
     """
-    Lists all leads belonging to the authenticated user.
+    Lists all leads belonging to the authenticated user's company.
     """
     try:
         response = supabase.table("leads")\
             .select("*")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .order("created_at", desc=True)\
             .execute()
         return response.data
@@ -58,13 +59,13 @@ def list_leads(current_user: dict = Depends(get_current_user)):
 @router.get("/{lead_id}", response_model=LeadResponse)
 def get_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
     """
-    Retrieves a single lead, validating ownership.
+    Retrieves a single lead, validating company ownership.
     """
     try:
         response = supabase.table("leads")\
             .select("*")\
             .eq("id", lead_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not response.data:
@@ -85,14 +86,14 @@ def get_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
 @router.delete("/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
     """
-    Deletes a lead, validating ownership.
+    Deletes a lead, validating company ownership.
     """
     try:
         # Check ownership first
         check_response = supabase.table("leads")\
             .select("id")\
             .eq("id", lead_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not check_response.data:
@@ -140,8 +141,15 @@ def lead_webhook(payload: dict, request: Request):
                 detail="Missing user_id or body in payload"
             )
             
+        # Fetch company_id for this user
+        company_id = '00000000-0000-0000-0000-000000000000'
+        user_res = supabase.table("users").select("company_id").eq("id", user_id).execute()
+        if user_res.data and user_res.data[0].get("company_id"):
+            company_id = user_res.data[0]["company_id"]
+
         response = supabase.table("leads").insert({
             "user_id": user_id,
+            "company_id": company_id,
             "title": subject,
             "raw_text": body,
             "source": "webhook",
@@ -168,7 +176,7 @@ def reimport_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
         check_response = supabase.table("leads")\
             .select("id")\
             .eq("id", lead_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not check_response.data:
@@ -178,7 +186,7 @@ def reimport_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
             )
             
         # Delete existing quote drafts for this lead
-        supabase.table("quotes").delete().eq("lead_id", lead_id).eq("user_id", current_user["id"]).execute()
+        supabase.table("quotes").delete().eq("lead_id", lead_id).eq("company_id", current_user["company_id"]).execute()
         
         # Reset status to pending
         res = supabase.table("leads").update({"status": "pending"}).eq("id", lead_id).execute()

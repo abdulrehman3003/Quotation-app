@@ -59,6 +59,7 @@ def process_kb_file(
         # Insert parsed data and metadata into knowledge_base table
         response = supabase.table("knowledge_base").insert({
             "user_id": current_user["id"],
+            "company_id": current_user["company_id"],
             "filename": filename,
             "file_path": file_path,
             "content_type": content_type,
@@ -88,12 +89,12 @@ def process_kb_file(
 @router.get("", response_model=List[KnowledgeBaseResponse])
 def list_knowledge_files(current_user: dict = Depends(get_current_user)):
     """
-    Lists all processed Knowledge Base files for the authenticated user.
+    Lists all processed Knowledge Base files for the authenticated user's company.
     """
     try:
         response = supabase.table("knowledge_base")\
             .select("*")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .order("created_at", desc=True)\
             .execute()
         return response.data
@@ -107,14 +108,14 @@ def list_knowledge_files(current_user: dict = Depends(get_current_user)):
 def delete_knowledge_file(kb_id: str, current_user: dict = Depends(get_current_user)):
     """
     Deletes the database metadata and removes the file from Supabase Storage.
-    Validates ownership before execution.
+    Validates company ownership before execution.
     """
     try:
         # Check ownership
         db_response = supabase.table("knowledge_base")\
             .select("*")\
             .eq("id", kb_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not db_response.data:
@@ -164,7 +165,7 @@ def update_knowledge_file(
         db_response = supabase.table("knowledge_base")\
             .select("*")\
             .eq("id", kb_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not db_response.data:

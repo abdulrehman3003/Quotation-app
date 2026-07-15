@@ -164,16 +164,24 @@ async def whatsapp_webhook(
             send_twilio_whatsapp(phone_number, "You are sending messages too quickly. Please wait a moment before trying again.", user_id)
             return {"status": "rate_limited", "detail": "Rate limit exceeded"}
 
+        # Fetch company_id for this user
+        company_id = '00000000-0000-0000-0000-000000000000'
+        if user_id:
+            user_res = supabase.table("users").select("company_id").eq("id", user_id).execute()
+            if user_res.data and user_res.data[0].get("company_id"):
+                company_id = user_res.data[0]["company_id"]
+
         # 3. Get or create the chat session
         chat_res = supabase.table("whatsapp_chats")\
             .select("*")\
-            .eq("user_id", user_id)\
+            .eq("company_id", company_id)\
             .eq("phone_number", phone_number)\
             .execute()
             
         if not chat_res.data:
             new_chat = supabase.table("whatsapp_chats").insert({
                 "user_id": user_id,
+                "company_id": company_id,
                 "phone_number": phone_number,
                 "customer_name": ProfileName,
                 "status": "active_ai"
@@ -326,12 +334,12 @@ async def whatsapp_webhook(
 @router.get("/chats")
 def list_chats(current_user: dict = Depends(get_current_user)):
     """
-    Lists active WhatsApp chat logs for the authenticated tenant.
+    Lists active WhatsApp chat logs for the authenticated user's company.
     """
     try:
         response = supabase.table("whatsapp_chats")\
             .select("*")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .order("created_at", desc=True)\
             .execute()
         return response.data
@@ -345,14 +353,14 @@ def list_chats(current_user: dict = Depends(get_current_user)):
 @router.get("/chats/{chat_id}/messages")
 def get_chat_messages(chat_id: str, current_user: dict = Depends(get_current_user)):
     """
-    Retrieves message history for a specific chat, validating ownership.
+    Retrieves message history for a specific chat, validating company ownership.
     """
     try:
         # Verify ownership
         chat_check = supabase.table("whatsapp_chats")\
             .select("id")\
             .eq("id", chat_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not chat_check.data:
@@ -390,7 +398,7 @@ def send_agent_message(
         chat_res = supabase.table("whatsapp_chats")\
             .select("*")\
             .eq("id", chat_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not chat_res.data:
@@ -435,7 +443,7 @@ def takeover_chat(
         chat_check = supabase.table("whatsapp_chats")\
             .select("id")\
             .eq("id", chat_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not chat_check.data:
@@ -483,7 +491,7 @@ def export_leads_csv(current_user: dict = Depends(get_current_user)):
         # Query active chats
         chats = supabase.table("whatsapp_chats")\
             .select("*")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         # Create CSV in memory
