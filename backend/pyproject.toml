@@ -17,5 +17,5 @@ dependencies = [
     "python-multipart>=0.0.9",
     "python-jose[cryptography]>=3.3.0",
     "cryptography>=42.0.0",
-    "imap-tools>=1.6.0"
+    "imap-tools>=1.6.0",
 ]

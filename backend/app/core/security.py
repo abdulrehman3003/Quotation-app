@@ -31,9 +31,19 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         if not user_id:
             raise JWTError("Invalid token: missing subject claim")
             
+        # Fetch the user profile from public.users to get the company_id
+        company_id = '00000000-0000-0000-0000-000000000000'
+        try:
+            user_res = supabase.table("users").select("company_id").eq("id", user_id).execute()
+            if user_res.data and user_res.data[0].get("company_id"):
+                company_id = user_res.data[0]["company_id"]
+        except Exception:
+            pass
+
         return {
             "id": user_id,
-            "email": email
+            "email": email,
+            "company_id": company_id
         }
     except JWTError as e:
         # 2. Fallback to Supabase Auth API verification (handles RS256 or other custom token algorithms)
@@ -44,9 +54,20 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Invalid token verification: {str(e)}"
                 )
+            
+            user_id = res.user.id
+            company_id = '00000000-0000-0000-0000-000000000000'
+            try:
+                user_res = supabase.table("users").select("company_id").eq("id", user_id).execute()
+                if user_res.data and user_res.data[0].get("company_id"):
+                    company_id = user_res.data[0]["company_id"]
+            except Exception:
+                pass
+
             return {
-                "id": res.user.id,
-                "email": res.user.email
+                "id": user_id,
+                "email": res.user.email,
+                "company_id": company_id
             }
         except Exception as api_err:
             raise HTTPException(

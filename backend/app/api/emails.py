@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 @router.get("")
 def list_emails(current_user: dict = Depends(get_current_user)):
     """
-    Retrieves all simulated customer emails for the authenticated tenant.
+    Retrieves all simulated customer emails for the authenticated user's company.
     """
     try:
         response = supabase.table("customer_emails")\
             .select("*")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .order("created_at", desc=True)\
             .limit(50)\
             .execute()
@@ -39,11 +39,11 @@ def transfer_email_to_leads(email_id: str, current_user: dict = Depends(get_curr
     Sets status of the email to 'imported'.
     """
     try:
-        # 1. Fetch and verify ownership of the email
+        # 1. Fetch and verify ownership of the email by company
         email_res = supabase.table("customer_emails")\
             .select("*")\
             .eq("id", email_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not email_res.data:
@@ -57,6 +57,7 @@ def transfer_email_to_leads(email_id: str, current_user: dict = Depends(get_curr
         # 2. Insert into the leads table
         lead_res = supabase.table("leads").insert({
             "user_id": current_user["id"],
+            "company_id": current_user["company_id"],
             "title": email["subject"],
             "raw_text": f"Sender: {email['sender_email']}\n\n{email['body']}",
             "source": "email",
@@ -147,11 +148,11 @@ def reply_to_email(
     Falls back to simulation log if Gmail credentials are not configured.
     """
     try:
-        # Verify ownership
+        # Verify ownership by company
         email_res = supabase.table("customer_emails")\
             .select("*")\
             .eq("id", email_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not email_res.data:

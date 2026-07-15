@@ -38,11 +38,11 @@ def generate_quote(
     stores the quote draft, and sets the lead's status to processed.
     """
     try:
-        # 1. Fetch and verify ownership of the Lead
+        # 1. Fetch and verify ownership of the Lead (by company)
         lead_response = supabase.table("leads")\
             .select("*")\
             .eq("id", lead_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not lead_response.data:
@@ -53,10 +53,10 @@ def generate_quote(
             
         lead = lead_response.data[0]
         
-        # 2. Fetch all active Knowledge Base content for this user
+        # 2. Fetch all active Knowledge Base content for this company
         kb_response = supabase.table("knowledge_base")\
             .select("parsed_content")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         kb_contents = [item["parsed_content"] for item in kb_response.data]
@@ -85,6 +85,7 @@ def generate_quote(
         quote_response = supabase.table("quotes").insert({
             "lead_id": lead_id,
             "user_id": current_user["id"],
+            "company_id": current_user["company_id"],
             "material_cost": ai_output.material_cost,
             "labor_cost": ai_output.labor_cost,
             "total_cost": ai_output.total_cost,
@@ -122,12 +123,12 @@ def generate_quote(
 @router.get("", response_model=List[QuoteResponse])
 def list_quotes(current_user: dict = Depends(get_current_user)):
     """
-    Lists all quotes belonging to the authenticated user.
+    Lists all quotes belonging to the authenticated user's company.
     """
     try:
         response = supabase.table("quotes")\
             .select("*")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .order("created_at", desc=True)\
             .execute()
         return [safe_parse_quote(q) for q in response.data]
@@ -146,7 +147,7 @@ def get_quote_by_lead(lead_id: str, current_user: dict = Depends(get_current_use
         response = supabase.table("quotes")\
             .select("*")\
             .eq("lead_id", lead_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not response.data:
@@ -176,14 +177,14 @@ def update_quote(
 ):
     """
     Allows human-in-the-loop manual adjustments of pricing and email drafts.
-    Strictly verifies ownership before updating.
+    Strictly verifies company ownership before updating.
     """
     try:
         # Check ownership
         check_response = supabase.table("quotes")\
             .select("id")\
             .eq("id", quote_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not check_response.data:
@@ -228,7 +229,7 @@ def dispatch_quote(quote_id: str, current_user: dict = Depends(get_current_user)
         response = supabase.table("quotes")\
             .select("*")\
             .eq("id", quote_id)\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .execute()
             
         if not response.data:
@@ -253,7 +254,7 @@ def dispatch_quote(quote_id: str, current_user: dict = Depends(get_current_user)
         customer_name = "Customer"
         # If WhatsApp lead, resolve name and phone from chat
         if lead.get("source") == "whatsapp":
-            chat_res = supabase.table("whatsapp_chats").select("customer_name", "phone_number").eq("user_id", current_user["id"]).execute()
+            chat_res = supabase.table("whatsapp_chats").select("customer_name", "phone_number").eq("company_id", current_user["company_id"]).execute()
             if chat_res.data:
                 customer_name = chat_res.data[0].get("customer_name", "WhatsApp Lead")
                 customer_phone = chat_res.data[0].get("phone_number")
@@ -312,6 +313,7 @@ def dispatch_quote(quote_id: str, current_user: dict = Depends(get_current_user)
         # Insert dispatch details into dispatched_quotes table for reporting/exports
         supabase.table("dispatched_quotes").insert({
             "user_id": current_user["id"],
+            "company_id": current_user["company_id"],
             "customer_name": customer_name,
             "customer_email": customer_email or "No email",
             "customer_phone": customer_phone,
@@ -348,7 +350,7 @@ def list_dispatched_quotes(current_user: dict = Depends(get_current_user)):
         # 1. Fetch dispatched quotes
         quotes_res = supabase.table("quotes")\
             .select("*")\
-            .eq("user_id", current_user["id"])\
+            .eq("company_id", current_user["company_id"])\
             .eq("status", "dispatched")\
             .order("created_at", desc=True)\
             .execute()
@@ -376,7 +378,7 @@ def list_dispatched_quotes(current_user: dict = Depends(get_current_user)):
                     customer_phone = phone_match.group(0) if phone_match else None
                     
                     if lead.get("source") == "whatsapp":
-                        chat_res = supabase.table("whatsapp_chats").select("customer_name", "phone_number").eq("user_id", current_user["id"]).execute()
+                        chat_res = supabase.table("whatsapp_chats").select("customer_name", "phone_number").eq("company_id", current_user["company_id"]).execute()
                         if chat_res.data:
                             customer_name = chat_res.data[0].get("customer_name", "WhatsApp Lead")
                             customer_phone = chat_res.data[0].get("phone_number")
