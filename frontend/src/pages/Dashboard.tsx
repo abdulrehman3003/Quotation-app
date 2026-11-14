@@ -1,7 +1,45 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useWorkspaceStore } from '../store/workspaceStore'
-import { Inbox, FileText, Database, PiggyBank, Plus, PlusCircle, Trash } from 'lucide-react'
+import { useWorkspaceStore, Lead } from '../store/workspaceStore'
+import {
+  AlertTriangle, ArrowRight, CheckCircle2, Clock, Database, Globe, Inbox, Mail, MessageSquare,
+  PenLine, Plus, Trash2, X, type LucideIcon,
+} from 'lucide-react'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
+
+const DAY_MS = 86_400_000
+const ACTIVITY_DAYS = 14
+
+const sourceIcon: Record<string, LucideIcon> = {
+  email: Mail,
+  whatsapp: MessageSquare,
+  webhook: Globe,
+  manual: PenLine,
+}
+
+// Same wording as the pipeline so a lead never has two names for one state.
+const leadStatus = (status: string) =>
+  status === 'processed'
+    ? { className: 'badge badge-success', label: 'Quoted' }
+    : status === 'dispatched'
+    ? { className: 'badge badge-accent', label: 'Sent' }
+    : status === 'failed'
+    ? { className: 'badge badge-danger', label: 'Failed' }
+    : { className: 'badge badge-warning', label: 'New' }
+
+const timeAgo = (iso: string) => {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  const days = Math.round(hours / 24)
+  if (days < 7) return `${days} d ago`
+  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate()
@@ -9,215 +47,463 @@ export const Dashboard: React.FC = () => {
     leads,
     quotes,
     kbFiles,
+    emails,
+    emailConfigured,
+    whatsappChats,
+    userProfile,
+    quoteAnalytics,
     fetchLeads,
     fetchQuotes,
     fetchKbFiles,
+    fetchQuoteAnalytics,
     createLead,
     deleteLead,
+    setActiveLead,
     loadingLeads,
   } = useWorkspaceStore()
 
+  const [showNewLead, setShowNewLead] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [newLeadTitle, setNewLeadTitle] = useState('')
   const [newLeadText, setNewLeadText] = useState('')
-  const [success, setSuccess] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [justAdded, setJustAdded] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [hoveredDay, setHoveredDay] = useState<number | null>(null)
 
   useEffect(() => {
     fetchLeads()
     fetchQuotes()
     fetchKbFiles()
-  }, [fetchLeads, fetchQuotes, fetchKbFiles])
+    fetchQuoteAnalytics()
+  }, [fetchLeads, fetchQuotes, fetchKbFiles, fetchQuoteAnalytics])
 
-  // Compute metrics
-  const totalLeads = leads.length
-  const totalQuotes = quotes.length
-  const totalKbFiles = kbFiles.length
-  
-  const avgQuoteVal = quotes.length > 0 
-    ? quotes.reduce((acc, q) => acc + Number(q.total_cost), 0) / quotes.length 
-    : 0.00
+  useEffect(() => {
+    if (!showNewLead) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowNewLead(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [showNewLead])
+
+  const currency = userProfile?.default_quote_parameters?.currency || 'USD'
+  const money = (value: number) => {
+    try {
+      return value.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })
+    } catch {
+      return `${Math.round(value).toLocaleString()} ${currency}`
+    }
+  }
+
+  // ---- Figures ----
+  const newLeads = leads.filter((l) => l.status === 'pending')
+  const failedLeads = leads.filter((l) => l.status === 'failed')
+  const drafts = quotes.filter((q) => q.status === 'draft')
+  const draftsToReview = drafts.filter((q) => (q.itemized_breakdown || []).some((i) => i.needs_review || Number(i.total_price) === 0))
+  const sent = quotes.filter((q) => q.status === 'dispatched')
+  const awaiting = sent.filter((q) => !q.outcome)
+  const won = sent.filter((q) => q.outcome === 'accepted')
+  const lost = sent.filter((q) => q.outcome === 'declined')
+  const sum = (rows: typeof quotes) => rows.reduce((acc, q) => acc + Number(q.total_cost || 0), 0)
+  const decided = won.length + lost.length
+  const winRate = decided ? Math.round((won.length / decided) * 100) : null
+  const followUps = quoteAnalytics?.needs_follow_up.length || 0
+  const unreadEmails = emails.filter((e) => e.status === 'unread').length
+  const escalatedChats = whatsappChats.filter((c) => c.status === 'human_required').length
+
+  const responseTime = (() => {
+    const hours = quoteAnalytics?.median_response_hours
+    if (hours == null) return null
+    if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`
+    if (hours < 48) return `${hours} h`
+    return `${Math.round(hours / 24)} days`
+  })()
+
+  const stats = [
+    {
+      label: 'To quote',
+      value: newLeads.length.toLocaleString(),
+      hint: newLeads.length === 1 ? 'request waiting for a price' : 'requests waiting for a price',
+      path: '/workspace',
+    },
+    {
+      label: 'Awaiting customer',
+      value: awaiting.length.toLocaleString(),
+      hint: awaiting.length ? `${money(sum(awaiting))} in open quotes` : 'no open quotes',
+      path: '/reports',
+    },
+    {
+      label: 'Win rate',
+      value: winRate != null ? `${winRate}%` : '—',
+      hint: decided ? `${won.length} won, ${lost.length} lost` : 'no quotes marked won or lost yet',
+      path: '/reports',
+    },
+    {
+      label: 'Won value',
+      value: money(sum(won)),
+      hint: responseTime ? `typical time to quote: ${responseTime}` : 'from accepted quotes',
+      path: '/reports',
+    },
+  ]
+
+  const attention = [
+    { show: newLeads.length > 0, icon: Inbox, tone: 'text-amber-300', text: `${newLeads.length} new request${newLeads.length === 1 ? '' : 's'} to price`, action: 'Open pipeline', path: '/workspace' },
+    { show: draftsToReview.length > 0, icon: AlertTriangle, tone: 'text-amber-300', text: `${draftsToReview.length} draft${draftsToReview.length === 1 ? ' has' : 's have'} items without a price`, action: 'Review', path: '/workspace' },
+    { show: failedLeads.length > 0, icon: AlertTriangle, tone: 'text-red-300', text: `${failedLeads.length} request${failedLeads.length === 1 ? '' : 's'} could not be priced`, action: 'Retry', path: '/workspace' },
+    { show: followUps > 0, icon: Clock, tone: 'text-amber-300', text: `${followUps} sent quote${followUps === 1 ? ' has' : 's have'} had no answer for ${quoteAnalytics?.follow_up_after_days ?? 3}+ days`, action: 'Follow up', path: '/reports' },
+    { show: escalatedChats > 0, icon: MessageSquare, tone: 'text-amber-300', text: `${escalatedChats} WhatsApp chat${escalatedChats === 1 ? ' is' : 's are'} waiting for a person`, action: 'Open chats', path: '/whatsapp' },
+    { show: unreadEmails > 0, icon: Mail, tone: 'text-slate-300', text: `${unreadEmails} unread customer email${unreadEmails === 1 ? '' : 's'}`, action: 'Open inbox', path: '/emails' },
+    { show: kbFiles.length === 0, icon: Database, tone: 'text-slate-300', text: 'No price sheets uploaded, so quotes cannot be priced', action: 'Add price sheet', path: '/kb' },
+    { show: emailConfigured === false, icon: Mail, tone: 'text-slate-300', text: 'No mailbox connected, so quotes cannot be emailed', action: 'Connect Gmail', path: '/profile' },
+  ].filter((a) => a.show)
+
+  const stages = [
+    { label: 'New', count: newLeads.length },
+    { label: 'Drafted', count: drafts.length },
+    { label: 'Awaiting customer', count: awaiting.length },
+    { label: 'Won', count: won.length },
+    { label: 'Lost', count: lost.length },
+  ]
+  const stageMax = Math.max(...stages.map((s) => s.count), 1)
+
+  const activity = useMemo(() => {
+    const today = startOfDay(new Date())
+    const days = Array.from({ length: ACTIVITY_DAYS }, (_, i) => ({ start: today - (ACTIVITY_DAYS - 1 - i) * DAY_MS, count: 0 }))
+    for (const lead of leads) {
+      const index = Math.floor((startOfDay(new Date(lead.created_at)) - days[0].start) / DAY_MS)
+      if (index >= 0 && index < ACTIVITY_DAYS) days[index].count += 1
+    }
+    return days
+  }, [leads])
+  const activityMax = Math.max(...activity.map((d) => d.count), 1)
+  const activityTotal = activity.reduce((acc, d) => acc + d.count, 0)
+  const dayLabel = (start: number) => new Date(start).toLocaleDateString([], { month: 'short', day: 'numeric' })
+
+  const openLead = async (lead: Lead) => {
+    await setActiveLead(lead)
+    navigate('/workspace')
+  }
 
   const handleAddLead = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newLeadTitle || !newLeadText) return
+    if (!newLeadTitle.trim() || !newLeadText.trim()) return
     setIsSubmitting(true)
-    setSuccess(false)
+    setFormError('')
     try {
-      await createLead(newLeadTitle, newLeadText)
+      await createLead(newLeadTitle.trim(), newLeadText.trim())
       setNewLeadTitle('')
       setNewLeadText('')
-      setSuccess(true)
-      setTimeout(() => setSuccess(false), 3000)
-    } catch (err) {
-      console.error(err)
+      setShowNewLead(false)
+      setJustAdded(true)
+      setTimeout(() => setJustAdded(false), 6000)
+    } catch (err: any) {
+      setFormError(err?.message || 'The lead could not be added. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const statItems = [
-    { label: 'Total Ingested Leads', value: totalLeads, icon: Inbox, color: 'text-blue-400', path: '/workspace' },
-    { label: 'Calculated Quote Drafts', value: totalQuotes, icon: FileText, color: 'text-indigo-400', path: '/reports' },
-    { label: 'Active Knowledge Sheets', value: totalKbFiles, icon: Database, color: 'text-brand-400', path: '/kb' },
-    { label: 'Average Quote Value', value: `$${avgQuoteVal.toFixed(2)}`, icon: PiggyBank, color: 'text-emerald-400', path: '/reports' },
-  ]
+  const firstName = (userProfile?.name || '').trim().split(/\s+/)[0]
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto bg-slate-950 text-slate-100">
-      {/* Welcome Banner */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-extrabold font-outfit text-white tracking-tight">System Dashboard</h1>
-        <p className="text-sm text-slate-400 mt-1">Overview of AXRFLOWS pricing engine, lead ingestion channels, and active knowledge models.</p>
-      </div>
+    <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <PageHeader
+        title={firstName ? `${greeting}, ${firstName}` : 'Dashboard'}
+        description={new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+        actions={
+          <button onClick={() => setShowNewLead(true)} className="btn btn-primary">
+            <Plus className="w-4 h-4" />
+            New lead
+          </button>
+        }
+      />
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        {loadingLeads ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 animate-pulse flex justify-between items-center">
-              <div className="space-y-2.5 w-2/3">
-                <div className="h-3 bg-slate-800 rounded w-3/4"></div>
-                <div className="h-7 bg-slate-855 rounded w-1/2"></div>
-              </div>
-              <div className="w-10 h-10 bg-slate-800 rounded-lg"></div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-6xl px-6 py-6 space-y-6">
+          {justAdded && (
+            <div className="alert alert-success" role="status">
+              <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+              <p>
+                Lead added.{' '}
+                <button type="button" onClick={() => navigate('/workspace')} className="underline underline-offset-2 cursor-pointer">
+                  Price it in the pipeline
+                </button>
+              </p>
             </div>
-          ))
-        ) : (
-          statItems.map((stat, i) => {
-            const Icon = stat.icon
-            return (
-              <div
-                key={i}
+          )}
+
+          {/* Headline figures */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {stats.map((stat) => (
+              <button
+                key={stat.label}
                 onClick={() => navigate(stat.path)}
-                className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 glass-card hover:shadow-glow-sm transition-all duration-300 cursor-pointer hover:border-slate-700/80 transform hover:-translate-y-0.5"
+                className="card p-4 text-left cursor-pointer transition-colors hover:border-slate-700 hover:bg-slate-850"
               >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{stat.label}</p>
-                    <p className="text-2xl font-bold font-outfit text-white mt-2">{stat.value}</p>
-                  </div>
-                  <div className={`p-3 rounded-lg bg-slate-900 border border-slate-800 ${stat.color}`}>
-                    <Icon className="w-5 h-5" />
-                  </div>
-                </div>
-              </div>
-            )
-          })
-        )}
-      </div>
+                <p className="text-xs font-medium text-slate-400">{stat.label}</p>
+                {loadingLeads && leads.length === 0 ? (
+                  <div className="mt-2 h-8 w-20 rounded bg-slate-800 animate-pulse" />
+                ) : (
+                  <p className="mt-2 text-[28px] leading-8 font-semibold text-slate-50 tabular-nums">{stat.value}</p>
+                )}
+                <p className="mt-1.5 text-xs text-slate-500 truncate">{stat.hint}</p>
+              </button>
+            ))}
+          </div>
 
-      {/* Double Column Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Ingest Unstructured Lead Form */}
-        <div className="lg:col-span-1 p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 glass-panel">
-          <h2 className="text-lg font-bold font-outfit text-white mb-4 flex items-center gap-2">
-            <PlusCircle className="w-5 h-5 text-brand-400" />
-            Ingest Unstructured Lead
-          </h2>
-          <form onSubmit={handleAddLead} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                Lead Identifier / Title
-              </label>
-              <input
-                type="text"
-                required
-                value={newLeadTitle}
-                onChange={(e) => setNewLeadTitle(e.target.value)}
-                placeholder="e.g. Email from John Doe (Apex Corp)"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-600 rounded-lg px-4 py-2.5 text-sm outline-none transition-all"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                Raw Email Context / Inquiries
-              </label>
-              <textarea
-                required
-                rows={6}
-                value={newLeadText}
-                onChange={(e) => setNewLeadText(e.target.value)}
-                placeholder="Paste the messy B2B email here..."
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-600 rounded-lg px-4 py-2.5 text-sm outline-none transition-all resize-none"
-              />
-            </div>
-            
-            {success && (
-              <div className="p-3 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
-                Lead ingested successfully! Head to Workspace.
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            {/* Needs attention */}
+            <section className="card lg:col-span-2" aria-labelledby="attention-title">
+              <div className="px-5 py-4 border-b border-slate-800">
+                <h2 id="attention-title" className="section-title">Needs attention</h2>
               </div>
-            )}
-            
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-lg disabled:bg-indigo-500/50 disabled:cursor-not-allowed transition-all duration-200 text-sm cursor-pointer"
-            >
-              {isSubmitting ? (
-                <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              {attention.length === 0 ? (
+                <div className="flex items-center gap-2.5 px-5 py-6 text-sm text-slate-400">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                  Nothing is waiting on you.
+                </div>
               ) : (
-                <>
-                  <Plus className="w-4 h-4" />
-                  Submit to Pipeline
-                </>
+                <ul className="divide-y divide-slate-800">
+                  {attention.map((item) => {
+                    const Icon = item.icon
+                    return (
+                      <li key={item.text}>
+                        <button
+                          onClick={() => navigate(item.path)}
+                          className="group w-full flex items-center gap-3 px-5 py-3 text-left cursor-pointer transition-colors hover:bg-slate-850"
+                        >
+                          <Icon className={`h-4 w-4 shrink-0 ${item.tone}`} strokeWidth={1.75} />
+                          <span className="flex-1 min-w-0 truncate text-sm text-slate-200">{item.text}</span>
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 group-hover:text-slate-100 whitespace-nowrap">
+                            {item.action}
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
               )}
-            </button>
-          </form>
-        </div>
+            </section>
 
-        {/* Recent Ingested Leads List */}
-        <div className="lg:col-span-2 p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 glass-panel flex flex-col">
-          <h2 className="text-lg font-bold font-outfit text-white mb-4">Ingestion Feed Queue</h2>
-          <div className="flex-1 overflow-y-auto max-h-[360px] pr-2 space-y-3">
-            {loadingLeads ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="p-4 rounded-lg bg-slate-900/60 border border-slate-800/50 animate-pulse flex justify-between items-center">
-                  <div className="space-y-2 w-2/3">
-                    <div className="h-4 bg-slate-800 rounded w-1/2"></div>
-                    <div className="h-3 bg-slate-850 rounded w-1/3"></div>
-                  </div>
-                  <div className="w-8 h-8 bg-slate-800 rounded"></div>
-                </div>
-              ))
-            ) : leads.length === 0 ? (
-              <div className="py-16 text-center">
-                <Inbox className="w-12 h-12 text-slate-700 mx-auto mb-3" />
-                <p className="text-sm text-slate-500">No leads ingested yet.</p>
+            {/* Pipeline stages */}
+            <section className="card" aria-labelledby="stages-title">
+              <div className="px-5 py-4 border-b border-slate-800">
+                <h2 id="stages-title" className="section-title">Pipeline</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Where every request stands right now.</p>
               </div>
-            ) : (
-              leads.map((lead) => (
-                <div key={lead.id} className="p-4 rounded-lg bg-slate-900/60 border border-slate-800/50 flex justify-between items-center hover:border-slate-700 transition-all duration-300">
-                  <div className="overflow-hidden">
-                    <p className="font-semibold text-slate-200 text-sm truncate">{lead.title}</p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                        lead.status === 'processed' 
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                          : lead.status === 'failed'
-                          ? 'bg-red-500/10 text-red-400 border border-red-500/20'
-                          : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
-                      }`}>
-                        {lead.status}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {new Date(lead.created_at).toLocaleDateString()}
-                      </span>
+              <dl className="p-5 space-y-3.5">
+                {stages.map((stage) => (
+                  <div key={stage.label}>
+                    <div className="flex items-baseline justify-between text-sm">
+                      <dt className="text-slate-300">{stage.label}</dt>
+                      <dd className="font-medium text-slate-100 tabular-nums">{stage.count}</dd>
+                    </div>
+                    <div className="mt-1.5 h-1.5 rounded-full bg-slate-800" aria-hidden="true">
+                      <div
+                        className="h-full rounded-full bg-brand-500 transition-[width] duration-300"
+                        style={{ width: stage.count ? `${Math.max((stage.count / stageMax) * 100, 3)}%` : 0 }}
+                      />
                     </div>
                   </div>
-                  <button 
-                    onClick={() => deleteLead(lead.id)}
-                    className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/5 rounded-lg border border-transparent hover:border-red-500/10 transition-all cursor-pointer"
-                  >
-                    <Trash className="w-4 h-4" />
+                ))}
+              </dl>
+            </section>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            {/* Recent leads */}
+            <section className="card lg:col-span-2" aria-labelledby="recent-title">
+              <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+                <h2 id="recent-title" className="section-title">Recent requests</h2>
+                {leads.length > 0 && (
+                  <button onClick={() => navigate('/workspace')} className="btn btn-ghost btn-sm">
+                    View all
+                    <ArrowRight className="h-3.5 w-3.5" />
                   </button>
+                )}
+              </div>
+              {loadingLeads && leads.length === 0 ? (
+                <div className="divide-y divide-slate-800">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="px-5 py-3.5 animate-pulse space-y-2">
+                      <div className="h-3 bg-slate-800 rounded w-1/2" />
+                      <div className="h-3 bg-slate-850 rounded w-1/4" />
+                    </div>
+                  ))}
                 </div>
-              ))
-            )}
+              ) : leads.length === 0 ? (
+                <EmptyState
+                  icon={Inbox}
+                  title="No requests yet"
+                  description="Add one by hand, or connect email and WhatsApp to bring requests in automatically."
+                  action={
+                    <button onClick={() => setShowNewLead(true)} className="btn btn-secondary btn-sm">
+                      <Plus className="h-3.5 w-3.5" /> New lead
+                    </button>
+                  }
+                />
+              ) : (
+                <ul className="divide-y divide-slate-800">
+                  {leads.slice(0, 8).map((lead) => {
+                    const Icon = sourceIcon[lead.source] || PenLine
+                    const badge = leadStatus(lead.status)
+                    const confirming = confirmDeleteId === lead.id
+                    return (
+                      <li key={lead.id} className="group flex items-center gap-1 pr-3 transition-colors hover:bg-slate-850">
+                        <button onClick={() => openLead(lead)} className="flex min-w-0 flex-1 items-center gap-3 pl-5 py-3 text-left cursor-pointer">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-800 text-slate-400" title={`Source: ${lead.source}`}>
+                            <Icon className="h-4 w-4" strokeWidth={1.75} />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-slate-100">{lead.title}</span>
+                            <span className="block truncate text-xs text-slate-500">
+                              <span className="capitalize">{lead.source}</span>
+                              {' · '}
+                              {timeAgo(lead.created_at)}
+                            </span>
+                          </span>
+                          <span className={badge.className}>{badge.label}</span>
+                        </button>
+                        {confirming ? (
+                          <span className="flex items-center gap-1 pl-2">
+                            <button
+                              onClick={() => {
+                                deleteLead(lead.id)
+                                setConfirmDeleteId(null)
+                              }}
+                              className="btn btn-danger btn-sm"
+                            >
+                              Delete
+                            </button>
+                            <button onClick={() => setConfirmDeleteId(null)} className="btn btn-ghost btn-sm">Cancel</button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteId(lead.id)}
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-red-500/10 hover:text-red-400 transition cursor-pointer"
+                            aria-label={`Delete ${lead.title}`}
+                            title="Delete lead"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </section>
+
+            {/* Requests per day */}
+            <section className="card" aria-labelledby="activity-title">
+              <div className="px-5 py-4 border-b border-slate-800">
+                <h2 id="activity-title" className="section-title">Requests received</h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {hoveredDay != null
+                    ? `${dayLabel(activity[hoveredDay].start)}: ${activity[hoveredDay].count} request${activity[hoveredDay].count === 1 ? '' : 's'}`
+                    : `${activityTotal} in the last ${ACTIVITY_DAYS} days`}
+                </p>
+              </div>
+              <div className="p-5">
+                <div
+                  className="flex h-28 items-end gap-0.5 border-b border-slate-700"
+                  role="img"
+                  aria-label={`Requests per day for the last ${ACTIVITY_DAYS} days: ${activity.map((d) => `${dayLabel(d.start)} ${d.count}`).join(', ')}`}
+                  onMouseLeave={() => setHoveredDay(null)}
+                >
+                  {activity.map((day, i) => (
+                    <div
+                      key={day.start}
+                      className="flex h-full flex-1 items-end px-px cursor-default"
+                      onMouseEnter={() => setHoveredDay(i)}
+                    >
+                      <div
+                        className={`w-full rounded-t ${hoveredDay === i ? 'bg-brand-400' : 'bg-brand-500'} ${day.count ? '' : 'opacity-0'}`}
+                        style={{ height: day.count ? `${Math.max((day.count / activityMax) * 100, 4)}%` : '0%' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex justify-between text-[11px] text-slate-500 tabular-nums">
+                  <span>{dayLabel(activity[0].start)}</span>
+                  <span>{activityTotal ? `Busiest day: ${activityMax}` : 'No requests'}</span>
+                  <span>Today</span>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
-
       </div>
+
+      {/* New lead dialog */}
+      {showNewLead && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowNewLead(false)
+          }}
+        >
+          <div role="dialog" aria-modal="true" aria-labelledby="new-lead-title" className="w-full max-w-lg rounded-lg border border-slate-800 bg-slate-900 shadow-popover">
+            <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-slate-800">
+              <div>
+                <h2 id="new-lead-title" className="text-base font-semibold text-slate-50">New lead</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Paste a customer request to price it in the pipeline.</p>
+              </div>
+              <button onClick={() => setShowNewLead(false)} className="btn-icon h-8 w-8 border-transparent -mr-1" aria-label="Close">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleAddLead} className="p-5 space-y-4">
+              <div>
+                <label htmlFor="lead-title" className="label">Title</label>
+                <input
+                  id="lead-title"
+                  type="text"
+                  required
+                  autoFocus
+                  value={newLeadTitle}
+                  onChange={(e) => setNewLeadTitle(e.target.value)}
+                  placeholder="e.g. Apex Corp – bracket order"
+                  className="input"
+                />
+              </div>
+              <div>
+                <label htmlFor="lead-text" className="label">Customer request</label>
+                <textarea
+                  id="lead-text"
+                  required
+                  rows={8}
+                  value={newLeadText}
+                  onChange={(e) => setNewLeadText(e.target.value)}
+                  placeholder="Paste the email or message exactly as you received it."
+                  className="input resize-none leading-6"
+                />
+              </div>
+              {formError && (
+                <div className="alert alert-error" role="alert">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <p>{formError}</p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setShowNewLead(false)} className="btn btn-secondary">Cancel</button>
+                <button type="submit" disabled={isSubmitting} className="btn btn-primary">
+                  {isSubmitting ? (
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  Add lead
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

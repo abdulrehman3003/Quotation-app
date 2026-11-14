@@ -1,8 +1,8 @@
 # app/api/admin.py
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Header, Request
-from typing import List, Optional
-from pydantic import BaseModel, EmailStr
-from app.core.security import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+from typing import List, Optional, Literal
+from pydantic import BaseModel
+from app.core.security import get_current_user, require_admin, _provision_isolated_company
 from app.core.encryption import encrypt_key
 from supabase import create_client, Client
 from app.core.config import settings
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class UserUpdateInput(BaseModel):
     name: Optional[str] = None
     phone_number: Optional[str] = None
-    role: Optional[str] = None
+    role: Optional[Literal["user", "admin"]] = None
     password: Optional[str] = None
     gemini_key: Optional[str] = None
     gmail_email: Optional[str] = None
@@ -31,55 +31,10 @@ class UserCreateInput(BaseModel):
     password: str
     name: Optional[str] = None
     phone_number: Optional[str] = None
-    role: str = "user"
-
-def verify_admin(request: Request):
-    """
-    Verifies that the request is authorized as admin.
-    Allows local admin subdomain bypass using static header or standard Supabase JWT validation.
-    """
-    x_admin_auth = request.headers.get("x-admin-auth") or request.headers.get("X-Admin-Auth")
-    import os
-    if os.getenv("ENV") != "production" and x_admin_auth == "admin":
-        return {"id": "admin", "email": "admin@axrflows.internal", "role": "admin"}
-        
-    try:
-        from fastapi.security.utils import get_authorization_scheme_param
-        authorization = request.headers.get("Authorization")
-        scheme, credentials = get_authorization_scheme_param(authorization)
-        if not authorization or scheme.lower() != "bearer":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-            
-        from jose import jwt
-        payload = jwt.decode(
-            credentials,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"verify_aud": False}
-        )
-        user_id = payload.get("sub")
-        email = payload.get("email")
-        
-        # Verify role in public.users DB
-        res = supabase.table("users").select("role").eq("id", user_id).execute()
-        if not res.data or res.data[0].get("role") != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: Admin role required."
-            )
-            
-        return {"id": user_id, "email": email, "role": "admin"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Admin verification failure: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
-        )
+    role: Literal["user", "admin"] = "user"
 
 @router.get("/users")
-def list_users(admin: dict = Depends(verify_admin)):
+def list_users(admin: dict = Depends(require_admin)):
     """
     Lists all registered users along with their settings flags (credentials are masked).
     Guarantees auth users show up even if missing from public users table.
@@ -103,14 +58,16 @@ def list_users(admin: dict = Depends(verify_admin)):
             user_id = auth_user.id
             profile = profiles_by_id.get(user_id)
             
-            # If public profile is missing, auto-insert it
+            # If public profile is missing, auto-upsert it with an isolated company
             if not profile:
                 try:
-                    insert_res = supabase.table("users").insert({
+                    comp_id = _provision_isolated_company(user_id, email=auth_user.email)
+                    insert_res = supabase.table("users").upsert({
                         "id": user_id,
-                        "email": auth_user.email,
-                        "role": "user"
-                    }).execute()
+                        "email": (auth_user.email or "").strip().lower(),
+                        "role": "user",
+                        "company_id": comp_id
+                    }, on_conflict="id").execute()
                     profile = insert_res.data[0] if insert_res.data else {}
                 except Exception as insert_err:
                     logger.warning(f"Failed to auto-insert public profile for user {user_id}: {str(insert_err)}")
@@ -133,69 +90,102 @@ def list_users(admin: dict = Depends(verify_admin)):
         return users_list
     except Exception as e:
         logger.error(f"Failed to list users: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 def create_new_user(
     data: UserCreateInput,
-    admin: dict = Depends(verify_admin)
+    admin: dict = Depends(require_admin)
 ):
     """
-    Creates a new user account in auth and registers their profile.
+    Creates a new user account in auth and registers their profile in an isolated company.
     """
+    clean_email = (data.email or "").strip().lower()
+    if not clean_email or "@" not in clean_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide a valid email address."
+        )
+    if not data.password or len(data.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long."
+        )
+
+    # Pre-check if email already exists in public.users
+    try:
+        existing_user = supabase.table("users").select("id").ilike("email", clean_email).limit(1).execute()
+        if existing_user.data:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email address already exists."
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     try:
         # Create user in auth via admin API (supports gotrue/AdminUserAttributes and dictionary formats)
         auth_res = None
         try:
             from gotrue.types import AdminUserAttributes
             auth_res = supabase.auth.admin.create_user(AdminUserAttributes(
-                email=data.email,
+                email=clean_email,
                 password=data.password,
                 email_confirm=True,
-                user_metadata={"email_verified": True}
+                user_metadata={"email_verified": True, "full_name": data.name or ""}
             ))
         except Exception as e_gotrue:
+            err_msg = str(e_gotrue).lower()
+            if any(k in err_msg for k in ("already", "registered", "exists", "duplicate", "23505")):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this email address already exists."
+                )
             logger.info(f"Failed to use AdminUserAttributes class, falling back to dict: {str(e_gotrue)}")
             auth_res = supabase.auth.admin.create_user({
-                "email": data.email,
+                "email": clean_email,
                 "password": data.password,
                 "email_confirm": True,
-                "user_metadata": {"email_verified": True}
+                "user_metadata": {"email_verified": True, "full_name": data.name or ""}
             })
         
         if not auth_res or not auth_res.user:
             raise HTTPException(status_code=500, detail="Failed to create user in auth database")
             
         user_id = auth_res.user.id
+        comp_id = _provision_isolated_company(user_id, email=clean_email, preferred_name=f"{data.name}'s Workspace" if data.name else None)
         
-        # Update public profile (since the Postgres trigger on auth.users automatically inserts it)
-        try:
-            supabase.table("users").update({
-                "name": data.name,
-                "phone_number": data.phone_number,
-                "role": data.role
-            }).eq("id", user_id).execute()
-        except Exception as update_err:
-            logger.info(f"Update failed, falling back to upsert: {str(update_err)}")
-            supabase.table("users").upsert({
-                "id": user_id,
-                "email": data.email,
-                "name": data.name,
-                "phone_number": data.phone_number,
-                "role": data.role
-            }).execute()
+        # Upsert public profile
+        supabase.table("users").upsert({
+            "id": user_id,
+            "email": clean_email,
+            "name": data.name,
+            "phone_number": data.phone_number,
+            "role": data.role,
+            "company_id": comp_id
+        }, on_conflict="id").execute()
         
-        logger.info(f"Admin created new user: {data.email}")
+        logger.info(f"Admin created new user: {clean_email}")
         return {"status": "success", "user_id": user_id}
+    except HTTPException:
+        raise
     except Exception as e:
+        err_lower = str(e).lower()
+        if any(k in err_lower for k in ("already", "registered", "exists", "duplicate", "23505")):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email address already exists."
+            )
         logger.error(f"Failed to create new user: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")
 
 @router.put("/users/{user_id}")
 def update_user_profile(
     user_id: str,
     data: UserUpdateInput,
-    admin: dict = Depends(verify_admin)
+    admin: dict = Depends(require_admin)
 ):
     """
     Allows admin to modify user details, encrypt credentials, and reset passwords.
@@ -241,10 +231,10 @@ def update_user_profile(
         return {"status": "success", "message": f"User profile {user_id} updated successfully"}
     except Exception as e:
         logger.error(f"Failed to update user profile: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")
 
 @router.delete("/users/{user_id}")
-def delete_user(user_id: str, admin: dict = Depends(verify_admin)):
+def delete_user(user_id: str, admin: dict = Depends(require_admin)):
     """
     Deletes a user account.
     """
@@ -254,10 +244,10 @@ def delete_user(user_id: str, admin: dict = Depends(verify_admin)):
         return {"status": "success", "message": f"User {user_id} successfully deleted"}
     except Exception as e:
         logger.error(f"Failed to delete user {user_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")
 
 @router.get("/system-status")
-def system_status(admin: dict = Depends(verify_admin)):
+def system_status(admin: dict = Depends(require_admin)):
     """
     Verifies backend, DB connection status and returns workspace resource statistics.
     """
@@ -286,7 +276,7 @@ def system_status(admin: dict = Depends(verify_admin)):
     }
 
 @router.get("/logs")
-def list_logs(limit: int = 100, admin: dict = Depends(verify_admin)):
+def list_logs(limit: int = Query(100, ge=1, le=1000), admin: dict = Depends(require_admin)):
     """
     Lists system logs from database.
     """
@@ -295,7 +285,10 @@ def list_logs(limit: int = 100, admin: dict = Depends(verify_admin)):
         return res.data
     except Exception as e:
         logger.error(f"Failed to fetch system logs: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")
+
+ALLOWED_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+MAX_LOG_MESSAGE_LENGTH = 2000
 
 @router.post("/logs")
 def add_log(
@@ -305,13 +298,18 @@ def add_log(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Allows logging of frontend (and backend) diagnostics into the system_logs database.
+    Allows logging of frontend diagnostics into the system_logs database.
+    Source is forced to 'frontend', level is whitelisted and the message is
+    truncated and tagged with the submitting user to prevent log spoofing.
     """
+    level_norm = (level or "").upper()
+    if level_norm not in ALLOWED_LOG_LEVELS:
+        level_norm = "INFO"
     try:
         supabase.table("system_logs").insert({
-            "source": source,
-            "level": level,
-            "message": message
+            "source": "frontend",
+            "level": level_norm,
+            "message": f"[user:{current_user['id']}] {str(message)[:MAX_LOG_MESSAGE_LENGTH]}"
         }).execute()
         return {"status": "success"}
     except Exception as e:
@@ -321,40 +319,60 @@ def add_log(
 import json
 import os
 
+# Legacy file location: only read as a fallback when the app_settings table is missing/empty.
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "global_settings.json")
+SETTINGS_ROW_ID = "global"
+DEFAULT_GLOBAL_SETTINGS = {
+    "base_labor_rate": 50.0,
+    "base_material_markup": 1.2
+}
 
-def load_global_settings():
+def _load_settings_file():
     try:
         if os.path.exists(SETTINGS_FILE):
             with open(SETTINGS_FILE, "r") as f:
                 return json.load(f)
     except Exception as e:
-        logger.error(f"Failed to load global settings: {e}")
-    # Default fallback parameters
-    return {
-        "base_labor_rate": 50.0,
-        "base_material_markup": 1.2
-    }
+        logger.error(f"Failed to load legacy global settings file: {e}")
+    return None
+
+def load_global_settings():
+    """
+    Loads global quotation parameters from the shared app_settings table
+    (so all workers/containers see the same values). Falls back to the
+    legacy JSON file, then to defaults.
+    """
+    try:
+        res = supabase.table("app_settings").select("value").eq("id", SETTINGS_ROW_ID).execute()
+        if res.data and isinstance(res.data[0].get("value"), dict):
+            return {**DEFAULT_GLOBAL_SETTINGS, **res.data[0]["value"]}
+    except Exception as e:
+        logger.warning(f"Failed to load global settings from database (run migration_v4?): {e}")
+    file_settings = _load_settings_file()
+    if file_settings:
+        return {**DEFAULT_GLOBAL_SETTINGS, **file_settings}
+    return dict(DEFAULT_GLOBAL_SETTINGS)
 
 def save_global_settings(settings_data):
     try:
-        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(settings_data, f, indent=2)
+        supabase.table("app_settings").upsert({
+            "id": SETTINGS_ROW_ID,
+            "value": settings_data
+        }).execute()
         return True
     except Exception as e:
-        logger.error(f"Failed to save global settings: {e}")
+        logger.error(f"Failed to save global settings to database: {e}")
         return False
 
 @router.get("/settings")
-def get_settings(admin: dict = Depends(verify_admin)):
+def get_settings(admin: dict = Depends(require_admin)):
     return load_global_settings()
 
 @router.post("/settings")
 def update_settings(
-    base_labor_rate: float = Body(...),
-    base_material_markup: float = Body(...),
-    admin: dict = Depends(verify_admin)
+    base_labor_rate: float = Body(..., gt=0),
+    base_material_markup: float = Body(..., gt=0),
+    admin: dict = Depends(require_admin)
 ):
     settings_data = {
         "base_labor_rate": base_labor_rate,
@@ -362,4 +380,4 @@ def update_settings(
     }
     if save_global_settings(settings_data):
         return {"status": "success", "settings": settings_data}
-    raise HTTPException(status_code=500, detail="Failed to save settings file")
+    raise HTTPException(status_code=500, detail="Failed to save settings")

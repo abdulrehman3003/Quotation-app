@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useWorkspaceStore, CustomerEmail } from '../store/workspaceStore'
-import { Mail, ArrowRight, CheckCircle, Send, Loader2, Inbox, ExternalLink, Copy, AtSign, RefreshCw } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Mail, ArrowRight, CheckCircle2, Send, Loader2, Inbox, ExternalLink, Copy, Check, RefreshCw, Search, Settings, MailPlus } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 // URL detection regex
 const URL_REGEX = /(https?:\/\/[^\s]+)/g
@@ -47,7 +50,7 @@ function renderEmailBody(rawBody: string): React.ReactNode {
     // Detect separator lines: 3+ dashes or equals signs
     if (/^[-=]{3,}$/.test(trimmed)) {
       elements.push(
-        <div key={key++} className="border-t border-slate-700/60 my-3" />
+        <div key={key++} className="border-t border-slate-800 my-3" />
       )
       continue
     }
@@ -72,7 +75,7 @@ function renderEmailBody(rawBody: string): React.ReactNode {
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 underline underline-offset-2 break-all transition-colors my-0.5"
+          className="inline-flex items-center gap-1.5 text-sm text-brand-300 hover:text-brand-200 underline underline-offset-2 break-all transition-colors my-0.5"
         >
           <ExternalLink className="h-3 w-3 shrink-0" />
           {label}
@@ -80,7 +83,7 @@ function renderEmailBody(rawBody: string): React.ReactNode {
       )
     } else {
       elements.push(
-        <p key={key++} className="text-sm text-slate-300 leading-relaxed">
+        <p key={key++} className="text-sm text-slate-300 leading-6">
           {tokens.map((token, ti) =>
             token.type === 'url' ? (
               <a
@@ -88,7 +91,7 @@ function renderEmailBody(rawBody: string): React.ReactNode {
                 href={token.content}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 transition-colors break-all"
+                className="text-brand-300 hover:text-brand-200 underline underline-offset-2 transition-colors break-all"
               >
                 {token.content.length > 50 ? token.content.slice(0, 47) + '…' : token.content}
               </a>
@@ -104,42 +107,110 @@ function renderEmailBody(rawBody: string): React.ReactNode {
   return <div className="flex flex-col gap-0.5">{elements}</div>
 }
 
+type StatusFilter = 'all' | 'unread' | 'imported' | 'replied'
+
+const FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'unread', label: 'Unread' },
+  { id: 'imported', label: 'In pipeline' },
+  { id: 'replied', label: 'Replied' }
+]
+
+const STATUS_BADGE: Record<string, { label: string; className: string }> = {
+  unread: { label: 'Unread', className: 'badge badge-accent' },
+  imported: { label: 'In pipeline', className: 'badge badge-warning' },
+  replied: { label: 'Replied', className: 'badge badge-success' }
+}
+
+// "Jane Doe <jane@acme.com>" -> { name: "Jane Doe", address: "jane@acme.com" }
+function parseSender(raw: string): { name: string; address: string } {
+  const match = raw.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/)
+  if (match && match[1]) return { name: match[1].trim(), address: match[2].trim() }
+  const address = (match ? match[2] : raw).trim()
+  const local = address.split('@')[0] || address
+  return { name: local, address }
+}
+
+// Plain one-line preview: drops HTML comments/tags and collapses whitespace
+function previewOf(body: string): string {
+  return stripInvisible(body || '')
+    .replace(/\\[nr]/g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function formatListDate(iso: string): string {
+  const date = new Date(iso)
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  }
+  const sameYear = date.getFullYear() === now.getFullYear()
+  return date.toLocaleDateString([], sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 export default function Emails() {
-  const { 
-    emails, 
-    loadingEmails, 
-    fetchEmails, 
-    transferEmail, 
-    replyEmail, 
-    error 
+  const navigate = useNavigate()
+  const {
+    emails,
+    emailConfigured,
+    loadingEmails,
+    fetchEmails,
+    transferEmail,
+    replyEmail,
+    userProfile,
+    error
   } = useWorkspaceStore()
 
-  const [selectedEmail, setSelectedEmail] = useState<CustomerEmail | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [filter, setFilter] = useState<StatusFilter>('all')
+  const [query, setQuery] = useState('')
   const [replyText, setReplyText] = useState('')
   const [processing, setProcessing] = useState(false)
-  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ tone: 'success' | 'warning'; text: string } | null>(null)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     fetchEmails()
   }, [fetchEmails])
 
-  // Sync selected email status updates
-  useEffect(() => {
-    if (selectedEmail) {
-      const updated = emails.find(e => e.id === selectedEmail.id)
-      if (updated) {
-        setSelectedEmail(updated)
-      }
-    }
-  }, [emails, selectedEmail])
+  const counts = useMemo(() => {
+    const result: Record<StatusFilter, number> = { all: emails.length, unread: 0, imported: 0, replied: 0 }
+    emails.forEach((e) => {
+      if (e.status in result) result[e.status as StatusFilter] += 1
+    })
+    return result
+  }, [emails])
+
+  const visibleEmails = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return emails.filter((e) => {
+      if (filter !== 'all' && e.status !== filter) return false
+      if (!q) return true
+      return (
+        e.sender_email.toLowerCase().includes(q) ||
+        (e.subject || '').toLowerCase().includes(q) ||
+        (e.body || '').toLowerCase().includes(q)
+      )
+    })
+  }, [emails, filter, query])
+
+  const selectedEmail: CustomerEmail | null = emails.find((e) => e.id === selectedId) || null
+
+  const selectEmail = (id: string) => {
+    setSelectedId(id)
+    setNotice(null)
+    setReplyText('')
+  }
 
   const handleTransfer = async (id: string) => {
     setProcessing(true)
-    setSuccessMessage(null)
+    setNotice(null)
     try {
       await transferEmail(id)
-      setSuccessMessage("Successfully transferred email to leads workspace pipeline!")
+      setNotice({ tone: 'success', text: 'Added to the pipeline. Open Pipeline to price this request.' })
     } catch (err) {
       console.error(err)
     } finally {
@@ -150,16 +221,18 @@ export default function Emails() {
   const handleReply = async (id: string) => {
     if (!replyText.trim()) return
     setProcessing(true)
-    setSuccessMessage(null)
+    setNotice(null)
     try {
       const result = await replyEmail(id, replyText)
       setReplyText('')
-      // Show whether it was real SMTP or simulated
-      const to = selectedEmail?.sender_email || 'the customer'
+      const to = selectedEmail ? parseSender(selectedEmail.sender_email).address : 'the customer'
       if (result?.sent) {
-        setSuccessMessage(`✅ Email dispatched via Gmail SMTP to ${to}`)
+        setNotice({ tone: 'success', text: `Reply sent to ${to}.` })
       } else {
-        setSuccessMessage(`📋 Reply logged (no Gmail credentials configured). To send real emails, set GMAIL_EMAIL and GMAIL_APP_PASSWORD in .env.`)
+        setNotice({
+          tone: 'warning',
+          text: 'Reply saved but not sent, because no Gmail account is connected. Connect one in Settings.'
+        })
       }
     } catch (err) {
       console.error(err)
@@ -174,248 +247,256 @@ export default function Emails() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-950 text-slate-100">
-      {/* Top Header */}
-      <div className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md px-6 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-            <Mail className="h-5 w-5 text-indigo-400" />
-            Client Email Inbox
-          </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Simulate and handle B2B pricing requests arriving via email.
-          </p>
+  const refreshButton = (
+    <button onClick={() => fetchEmails()} className="btn btn-secondary" disabled={loadingEmails}>
+      <RefreshCw className={`h-4 w-4 ${loadingEmails ? 'animate-spin' : ''}`} />
+      Refresh
+    </button>
+  )
+
+  // No mailbox connected: show nothing but the way to connect one.
+  if (emailConfigured === false) {
+    return (
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        <PageHeader title="Email" description="Customer enquiries received in your connected mailbox." />
+        <div className="flex-1 flex items-center justify-center">
+          <EmptyState
+            icon={MailPlus}
+            title="Connect a mailbox to see your email"
+            description="Add your Gmail address and app password in Settings. Incoming enquiries will then appear here, and replies will be sent from that address."
+            action={
+              <button onClick={() => navigate('/profile')} className="btn btn-primary">
+                <Settings className="h-4 w-4" />
+                Open settings
+              </button>
+            }
+          />
         </div>
-
-        <button
-          onClick={() => fetchEmails()}
-          className="px-4 py-2 border border-slate-800 hover:border-slate-700 bg-slate-900/60 text-slate-400 hover:text-white rounded-lg transition-all flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
-        >
-          <RefreshCw className={`h-4.5 w-4.5 ${loadingEmails ? 'animate-spin' : ''}`} />
-          Refresh Inbox
-        </button>
       </div>
+    )
+  }
 
-      {/* Main Grid Workspace */}
+  const initialLoad = loadingEmails && emails.length === 0
+  const sender = selectedEmail ? parseSender(selectedEmail.sender_email) : null
+  const mailbox = userProfile?.gmail_email as string | undefined
+
+  return (
+    <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <PageHeader
+        title="Email"
+        description={mailbox ? `Customer enquiries received at ${mailbox}` : 'Customer enquiries received in your connected mailbox.'}
+        actions={refreshButton}
+      />
+
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Side: Inbox List */}
-        <div className="w-1/3 border-r border-slate-800 flex flex-col bg-slate-900/20 overflow-y-auto">
-          {error && (
-            <div className="p-3 m-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">
-              {error}
+        {/* Message list */}
+        <section className="w-[380px] shrink-0 border-r border-slate-800 flex flex-col bg-slate-900/40" aria-label="Messages">
+          <div className="p-3 border-b border-slate-800 space-y-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search sender, subject or text"
+                className="input pl-9"
+              />
             </div>
-          )}
-          {loadingEmails ? (
-            <div className="divide-y divide-slate-800/60">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="p-4 space-y-3 animate-pulse">
-                  <div className="flex justify-between items-center">
-                    <div className="h-3 bg-slate-800 rounded w-1/3"></div>
-                    <div className="h-4 bg-slate-850 rounded w-12"></div>
-                  </div>
-                  <div className="h-4 bg-slate-800 rounded w-3/4"></div>
-                  <div className="h-3 bg-slate-850 rounded w-5/6"></div>
-                </div>
+            <div className="flex gap-1" role="tablist" aria-label="Filter messages">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  role="tab"
+                  aria-selected={filter === f.id}
+                  onClick={() => setFilter(f.id)}
+                  className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                    filter === f.id ? 'bg-slate-800 text-slate-50' : 'text-slate-400 hover:text-slate-100 hover:bg-slate-850'
+                  }`}
+                >
+                  {f.label}
+                  <span className="ml-1.5 text-slate-500 tabular-nums">{counts[f.id]}</span>
+                </button>
               ))}
             </div>
-          ) : emails.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-6 text-slate-500 text-center">
-              <Inbox className="h-8 w-8 mb-2 stroke-[1.5]" />
-              <p className="text-sm">Your simulated email feed is empty.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-800/60">
-              {emails.map((email) => {
-                const isSelected = selectedEmail?.id === email.id
-                return (
-                  <button
-                    key={email.id}
-                    onClick={() => {
-                      setSelectedEmail(email)
-                      setSuccessMessage(null)
-                      setReplyText('')
-                    }}
-                    className={`w-full text-left p-4 transition-all duration-200 ${
-                      isSelected 
-                        ? 'bg-slate-800/80 border-l-4 border-indigo-500' 
-                        : 'hover:bg-slate-900/60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-slate-400 truncate max-w-[150px]">
-                        {email.sender_email}
-                      </span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                        email.status === 'unread' 
-                          ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                          : email.status === 'imported'
-                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                          : 'bg-green-500/10 text-green-400 border border-green-500/20'
-                      }`}>
-                        {email.status.toUpperCase()}
-                      </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {error && <div className="alert alert-error m-3">{error}</div>}
+
+            {initialLoad || emailConfigured === null ? (
+              <div className="divide-y divide-slate-800">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="px-4 py-3.5 space-y-2 animate-pulse">
+                    <div className="flex justify-between">
+                      <div className="h-3 bg-slate-800 rounded w-1/3" />
+                      <div className="h-3 bg-slate-800 rounded w-10" />
                     </div>
-                    <h3 className="text-sm font-semibold text-white mt-1.5 truncate">
-                      {email.subject}
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                      {email.body ? email.body.replace(/\\n/g, ' ') : ''}
-                    </p>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Right Side: Email Reader & Actions */}
-        <div className="flex-1 flex flex-col bg-slate-950 overflow-y-auto p-6">
-          {selectedEmail ? (
-            <div className="max-w-3xl flex flex-col gap-6">
-              {/* Alert Message Banner */}
-              {(successMessage || error) && (
-                <div className={`p-4 rounded-lg flex items-center gap-3 text-sm ${
-                  error 
-                    ? 'bg-red-500/10 border border-red-500/20 text-red-400' 
-                    : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                }`}>
-                  {error ? (
-                    <p>{error}</p>
-                  ) : (
-                    <>
-                      <CheckCircle className="h-5 w-5 shrink-0" />
-                      <p>{successMessage}</p>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Email Content Panel */}
-              <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-6 shadow-xl backdrop-blur-sm">
-                <div className="flex flex-col gap-1 border-b border-slate-800 pb-4">
-                  <div className="flex items-center justify-between text-xs text-slate-400">
-                    <span>From: <strong>{selectedEmail.sender_email}</strong></span>
-                    <span>Received: {new Date(selectedEmail.created_at).toLocaleString()}</span>
+                    <div className="h-3 bg-slate-800 rounded w-3/4" />
+                    <div className="h-3 bg-slate-850 rounded w-5/6" />
                   </div>
-                  <h2 className="text-lg font-bold text-white mt-2">
-                    {selectedEmail.subject}
-                  </h2>
-                </div>
-
-                <div className="mt-4">
-                  {renderEmailBody(selectedEmail.body)}
-                </div>
+                ))}
               </div>
+            ) : visibleEmails.length === 0 ? (
+              <EmptyState
+                icon={Inbox}
+                title={emails.length === 0 ? 'No email yet' : 'No messages match'}
+                description={
+                  emails.length === 0
+                    ? 'New enquiries sent to your connected mailbox will show up here.'
+                    : 'Try a different search or filter.'
+                }
+              />
+            ) : (
+              <ul className="divide-y divide-slate-800">
+                {visibleEmails.map((email) => {
+                  const isSelected = selectedId === email.id
+                  const isUnread = email.status === 'unread'
+                  const from = parseSender(email.sender_email)
+                  return (
+                    <li key={email.id}>
+                      <button
+                        data-testid="list-item"
+                        onClick={() => selectEmail(email.id)}
+                        aria-current={isSelected}
+                        className={`relative w-full text-left px-4 py-3.5 transition-colors cursor-pointer ${
+                          isSelected ? 'bg-slate-800/70' : 'hover:bg-slate-850'
+                        }`}
+                      >
+                        {isSelected && <span className="absolute inset-y-0 left-0 w-0.5 bg-brand-500" />}
+                        <div className="flex items-center gap-2">
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isUnread ? 'bg-brand-400' : 'bg-transparent'}`} />
+                          <span className={`flex-1 truncate text-sm ${isUnread ? 'font-semibold text-slate-50' : 'font-medium text-slate-300'}`}>
+                            {from.name}
+                          </span>
+                          <span className="shrink-0 text-xs text-slate-500 tabular-nums">{formatListDate(email.created_at)}</span>
+                        </div>
+                        <p className={`mt-1 pl-3.5 truncate text-sm ${isUnread ? 'text-slate-100' : 'text-slate-300'}`}>
+                          {email.subject || '(no subject)'}
+                        </p>
+                        <p className="mt-0.5 pl-3.5 truncate text-xs text-slate-500">{previewOf(email.body)}</p>
+                        {!isUnread && STATUS_BADGE[email.status] && (
+                          <span className={`${STATUS_BADGE[email.status].className} mt-2 ml-3.5`}>
+                            {STATUS_BADGE[email.status].label}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        </section>
 
-              {/* Action Section */}
-              <div className="flex flex-col gap-4">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-                  Actions Pipeline
-                </h3>
-
-                {selectedEmail.status === 'unread' && (
-                  <div className="bg-indigo-500/5 border border-indigo-500/10 rounded-xl p-5 flex items-center justify-between gap-4">
-                    <div>
-                      <h4 className="text-sm font-semibold text-white">Transfer to Lead Pipeline</h4>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        Import this email directly into your workspace feed to calculate costs.
-                      </p>
-                    </div>
+        {/* Reading pane */}
+        <section className="flex-1 min-w-0 flex flex-col" aria-label="Message">
+          {selectedEmail && sender ? (
+            <>
+              <div className="px-8 py-5 border-b border-slate-800 shrink-0">
+                <div className="flex items-start justify-between gap-6">
+                  <h2 className="text-lg font-semibold text-slate-50 leading-snug">
+                    {selectedEmail.subject || '(no subject)'}
+                  </h2>
+                  {selectedEmail.status === 'unread' && (
                     <button
                       onClick={() => handleTransfer(selectedEmail.id)}
                       disabled={processing}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-all disabled:opacity-50"
+                      className="btn btn-primary shrink-0"
                     >
-                      {processing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          Import Lead
-                          <ArrowRight className="h-4 w-4" />
-                        </>
-                      )}
+                      {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                      Add to pipeline
                     </button>
+                  )}
+                  {selectedEmail.status === 'imported' && (
+                    <button onClick={() => navigate('/workspace')} className="btn btn-secondary shrink-0">
+                      Open pipeline
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="h-9 w-9 shrink-0 rounded-full bg-slate-800 text-slate-200 text-sm font-semibold flex items-center justify-center">
+                    {sender.name.charAt(0).toUpperCase()}
                   </div>
-                )}
-
-                {selectedEmail.status === 'imported' && (
-                  <div className="flex flex-col gap-4">
-                    <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-5">
-                      <h4 className="text-sm font-semibold text-amber-400">Lead is Active in Workspace</h4>
-                      <p className="text-xs text-slate-400 mt-1">
-                        We have successfully generated a lead card for this email. Use the **Workspace** dashboard to edit items, run the pricing calculation model, and structure the official quote response template.
-                      </p>
-                    </div>
-
-                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-6 flex flex-col gap-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-semibold text-white">Send Response Email</h4>
-                        <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-slate-800/60 rounded-full px-3 py-1">
-                          <AtSign className="h-3 w-3" />
-                          <span className="truncate max-w-[180px]">{selectedEmail.sender_email}</span>
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-400">
-                        Type or paste your quotation reply below. It will be sent directly to <strong className="text-slate-300">{selectedEmail.sender_email}</strong> via Gmail.
-                      </p>
-                      <textarea
-                        value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
-                        placeholder={`Dear ${selectedEmail.sender_email.split('@')[0]},\n\nThank you for reaching out. Please find the quotation breakdown below:\n\n...`}
-                        className="w-full min-h-[200px] bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-                      />
-                      <div className="flex items-center justify-between mt-1">
-                        <button
-                          onClick={handleCopy}
-                          disabled={!replyText.trim()}
-                          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium flex items-center gap-2 transition-all disabled:opacity-40"
-                        >
-                          {copied ? (
-                            <><CheckCircle className="h-3.5 w-3.5 text-emerald-400" /> Copied!</>
-                          ) : (
-                            <><Copy className="h-3.5 w-3.5" /> Copy to Clipboard</>
-                          )}
-                        </button>
-                        <button
-                          onClick={() => handleReply(selectedEmail.id)}
-                          disabled={processing || !replyText.trim()}
-                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-all disabled:opacity-50"
-                        >
-                          {processing ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <>
-                              Send to {selectedEmail.sender_email.split('@')[0]}
-                              <Send className="h-4 w-4" />
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-100">{sender.name}</p>
+                    <p className="truncate text-xs text-slate-500">{sender.address}</p>
                   </div>
-                )}
-
-                {selectedEmail.status === 'replied' && (
-                  <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-5 flex items-center gap-3">
-                    <CheckCircle className="text-emerald-400 h-6 w-6 shrink-0" />
-                    <div>
-                      <h4 className="text-sm font-semibold text-emerald-400">Quotation Process Complete</h4>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        The reply has been successfully dispatched to the client. No further actions are required.
-                      </p>
-                    </div>
-                  </div>
-                )}
+                  {STATUS_BADGE[selectedEmail.status] && (
+                    <span className={STATUS_BADGE[selectedEmail.status].className}>
+                      {STATUS_BADGE[selectedEmail.status].label}
+                    </span>
+                  )}
+                  <time className="shrink-0 text-xs text-slate-500">
+                    {new Date(selectedEmail.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                  </time>
+                </div>
               </div>
-            </div>
+
+              <div className="flex-1 overflow-y-auto">
+                <div className="max-w-3xl px-8 py-6 space-y-6">
+                  {notice && (
+                    <div className={`alert ${notice.tone === 'success' ? 'alert-success' : 'alert-warning'}`} role="status">
+                      {notice.tone === 'success' && <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />}
+                      <p>{notice.text}</p>
+                    </div>
+                  )}
+
+                  <article className="break-words">{renderEmailBody(selectedEmail.body)}</article>
+
+                  {selectedEmail.status === 'unread' && (
+                    <p className="text-xs text-slate-500 border-t border-slate-800 pt-4">
+                      Add this message to the pipeline to price it. You can reply once it has been added.
+                    </p>
+                  )}
+
+                  {selectedEmail.status === 'replied' && (
+                    <div className="alert alert-info">
+                      <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-400" />
+                      <p>You replied to this message. Nothing else is needed.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {selectedEmail.status === 'imported' && (
+                <div className="border-t border-slate-800 bg-slate-900/40 px-8 py-4 shrink-0">
+                  <div className="max-w-3xl">
+                    <label htmlFor="reply" className="label">
+                      Reply to {sender.address}
+                    </label>
+                    <textarea
+                      id="reply"
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      rows={5}
+                      placeholder="Write your reply, or paste the quote drafted in Pipeline."
+                      className="input resize-y min-h-[112px] leading-6"
+                    />
+                    <div className="mt-3 flex items-center justify-between">
+                      <button onClick={handleCopy} disabled={!replyText.trim()} className="btn btn-ghost btn-sm">
+                        {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                        {copied ? 'Copied' : 'Copy text'}
+                      </button>
+                      <button
+                        onClick={() => handleReply(selectedEmail.id)}
+                        disabled={processing || !replyText.trim()}
+                        className="btn btn-primary"
+                      >
+                        {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        Send reply
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-500">
-              <Mail className="h-10 w-10 mb-2 stroke-[1.5]" />
-              <p className="text-sm">Select an email from the list to view specifications.</p>
+            <div className="flex-1 flex items-center justify-center">
+              <EmptyState icon={Mail} title="Select a message" description="Choose a message on the left to read it and reply." />
             </div>
           )}
-        </div>
+        </section>
       </div>
     </div>
   )

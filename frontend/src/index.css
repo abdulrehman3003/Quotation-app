@@ -3,63 +3,210 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    color-scheme: dark;
+  }
+
   body {
-    @apply bg-slate-950 text-slate-100 antialiased;
-    font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+    @apply bg-slate-950 text-slate-200 antialiased;
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  h1, h2, h3, h4 {
+    @apply text-slate-50;
+    letter-spacing: -0.01em;
+  }
+
+  /* Visible keyboard focus everywhere, without a ring on mouse clicks. */
+  :focus-visible {
+    outline: 2px solid theme('colors.brand.400');
+    outline-offset: 2px;
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+  }
+
+  ::selection {
+    background: theme('colors.brand.700');
+    color: #fff;
   }
 }
 
-/* Reusable UI Utility styles for premium dark-mode exclusive theme */
-.glass-panel {
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+@layer components {
+  /* ---------- Surfaces ---------- */
+  .card {
+    @apply bg-slate-900 border border-slate-800 rounded-lg;
+  }
+
+  /* Legacy names kept so older markup resolves to the same flat surface. */
+  .glass-panel,
+  .glass-card {
+    @apply bg-slate-900 border border-slate-800;
+  }
+
+  /* ---------- Page chrome ---------- */
+  .page-header {
+    @apply flex items-center justify-between gap-4 px-6 h-16 shrink-0 border-b border-slate-800 bg-slate-950;
+  }
+
+  .page-title {
+    @apply text-base font-semibold text-slate-50 leading-tight;
+  }
+
+  .page-subtitle {
+    @apply text-xs text-slate-400 mt-0.5;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold text-slate-100;
+  }
+
+  .eyebrow {
+    @apply text-[11px] font-medium uppercase tracking-wide text-slate-500;
+  }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-md text-sm font-medium whitespace-nowrap select-none cursor-pointer transition-colors duration-150;
+  }
+
+  .btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  .btn-sm {
+    @apply h-8 px-3 text-xs;
+  }
+
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-500 active:bg-brand-700;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-850 text-slate-200 border border-slate-700 hover:bg-slate-800 hover:text-slate-50;
+  }
+
+  .btn-ghost {
+    @apply text-slate-400 hover:bg-slate-850 hover:text-slate-100;
+  }
+
+  .btn-danger {
+    @apply bg-transparent text-red-400 border border-red-500/30 hover:bg-red-500/10;
+  }
+
+  .btn-icon {
+    @apply inline-flex items-center justify-center h-9 w-9 rounded-md text-slate-400 border border-slate-800 bg-transparent cursor-pointer transition-colors duration-150 hover:bg-slate-850 hover:text-slate-100;
+  }
+
+  /* ---------- Forms ---------- */
+  .label {
+    @apply block text-xs font-medium text-slate-400 mb-1.5;
+  }
+
+  .input {
+    @apply w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-100 placeholder-slate-500 transition-colors duration-150;
+  }
+
+  /* Compact field for table cells: fixed 32px height with no vertical padding,
+     so text (and the native select arrow) is centred instead of clipped. */
+  .input-sm {
+    @apply h-8 py-0 px-2 text-sm leading-none;
+  }
+
+  /* Spinner arrows shift right-aligned numbers sideways on hover; hide them in compact cells. */
+  input[type='number'].input-sm {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  input[type='number'].input-sm::-webkit-outer-spin-button,
+  input[type='number'].input-sm::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  select.input {
+    @apply pr-7 cursor-pointer;
+    text-overflow: ellipsis;
+  }
+
+  .input:hover {
+    @apply border-slate-600;
+  }
+
+  .input:focus {
+    @apply border-brand-500 ring-1 ring-brand-500 outline-none;
+  }
+
+  .input:disabled {
+    @apply opacity-60 cursor-not-allowed;
+  }
+
+  /* ---------- Badges ---------- */
+  .badge {
+    @apply inline-flex items-center gap-1 h-5 px-2 rounded text-[11px] font-medium whitespace-nowrap;
+  }
+
+  .badge-neutral { @apply bg-slate-800 text-slate-300; }
+  .badge-accent { @apply bg-brand-500/15 text-brand-300; }
+  .badge-success { @apply bg-emerald-500/15 text-emerald-300; }
+  .badge-warning { @apply bg-amber-500/15 text-amber-300; }
+  .badge-danger { @apply bg-red-500/15 text-red-300; }
+
+  /* ---------- Feedback ---------- */
+  .alert {
+    @apply flex items-start gap-2.5 rounded-md border px-3 py-2.5 text-sm;
+  }
+
+  .alert-error { @apply border-red-500/25 bg-red-500/10 text-red-300; }
+  .alert-success { @apply border-emerald-500/25 bg-emerald-500/10 text-emerald-300; }
+  .alert-info { @apply border-slate-700 bg-slate-850 text-slate-300; }
+  .alert-warning { @apply border-amber-500/25 bg-amber-500/10 text-amber-200; }
 }
 
-.glass-card {
-  background: rgba(30, 41, 59, 0.25);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.03);
-}
-
-.glow-border {
-  position: relative;
-  transition: all 0.3s ease;
-}
-
-.glow-border:hover {
-  border-color: rgba(59, 130, 246, 0.4);
-  box-shadow: 0 0 15px rgba(59, 130, 246, 0.15);
-}
-
-.text-glow {
-  text-shadow: 0 0 8px rgba(96, 165, 250, 0.3);
-}
-
+/* Retired decorative effects: kept as no-ops so stray class names are harmless. */
+.glow-border,
+.text-glow,
 .bg-grid {
-  background-size: 40px 40px;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.01) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
+  background-image: none;
+  text-shadow: none;
 }
 
-/* Custom premium scrollbar design */
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #33373f transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #020617;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #33373f;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #4a4f5a;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

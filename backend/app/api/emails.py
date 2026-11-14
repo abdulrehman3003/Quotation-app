@@ -12,11 +12,29 @@ router = APIRouter(prefix="/emails", tags=["Simulated Emails"])
 supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
 logger = logging.getLogger(__name__)
 
+def _readable_body(body: str) -> str:
+    from app.services.parser import looks_like_html, html_to_text
+    return html_to_text(body) if looks_like_html(body or "") else (body or "")
+
+
+@router.get("/status")
+def email_status(current_user: dict = Depends(get_current_user)):
+    """
+    Tells the client whether this workspace has connected a mailbox in its settings.
+    """
+    from app.core.credentials import has_workspace_gmail
+    return {"configured": has_workspace_gmail(current_user["id"])}
+
+
 @router.get("")
 def list_emails(current_user: dict = Depends(get_current_user)):
     """
-    Retrieves all simulated customer emails for the authenticated user's company.
+    Retrieves customer emails for the authenticated user's company.
+    Returns nothing until the workspace has connected a mailbox in its settings.
     """
+    from app.core.credentials import has_workspace_gmail
+    if not has_workspace_gmail(current_user["id"]):
+        return []
     try:
         response = supabase.table("customer_emails")\
             .select("*")\
@@ -24,6 +42,11 @@ def list_emails(current_user: dict = Depends(get_current_user)):
             .order("created_at", desc=True)\
             .limit(50)\
             .execute()
+        from app.services.parser import looks_like_html, html_to_text
+        for row in response.data or []:
+            # Emails stored before HTML was converted on arrival
+            if looks_like_html(row.get("body") or ""):
+                row["body"] = html_to_text(row["body"])
         return response.data
     except Exception as e:
         logger.error(f"Failed to fetch customer emails: {str(e)}")
@@ -53,13 +76,18 @@ def transfer_email_to_leads(email_id: str, current_user: dict = Depends(get_curr
             )
             
         email = email_res.data[0]
+        if email.get("status") in ("imported", "replied"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email has already been imported into your leads pipeline."
+            )
         
         # 2. Insert into the leads table
         lead_res = supabase.table("leads").insert({
             "user_id": current_user["id"],
             "company_id": current_user["company_id"],
             "title": email["subject"],
-            "raw_text": f"Sender: {email['sender_email']}\n\n{email['body']}",
+            "raw_text": f"Sender: {email['sender_email']}\n\n{_readable_body(email['body'])}",
             "source": "email",
             "status": "pending"
         }).execute()
@@ -118,22 +146,27 @@ def send_smtp_email(to_address: str, subject: str, body: str, custom_user: str |
     msg.attach(MIMEText(body, "plain"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(gmail_user, gmail_password)
-            server.sendmail(gmail_user, to_address, msg.as_string())
-        logger.info(f"Email successfully sent to {to_address} via Gmail SMTP.")
+        from app.services.mail_oauth import OAuthToken, send_message_oauth
+        if isinstance(gmail_password, OAuthToken):
+            send_message_oauth(gmail_user, gmail_password, to_address, msg.as_string())
+        else:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(gmail_user, gmail_password)
+                server.sendmail(gmail_user, to_address, msg.as_string())
+        logger.info(f"Email successfully sent to {to_address}.")
         return True
     except smtplib.SMTPAuthenticationError:
         logger.error("Gmail SMTP authentication failed. Check GMAIL_EMAIL and GMAIL_APP_PASSWORD.")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Gmail authentication failed. Please check your App Password in .env or user settings."
+            detail="The mailbox rejected the sign-in. Reconnect it in Settings (or check the app password)."
         )
     except Exception as e:
         logger.error(f"Gmail SMTP send error: {str(e)}")
+        logger.error(f"Failed to send email: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to send email: {str(e)}"
+            detail="Failed to send email"
         )
 
 
@@ -165,18 +198,9 @@ def reply_to_email(
         to_address = email["sender_email"]
         subject = f"Re: {email['subject']}"
 
-        # Resolve user specific Gmail configurations from DB profile
-        user_res = supabase.table("users").select("encrypted_gmail_email", "encrypted_gmail_password").eq("id", current_user["id"]).execute()
-        gmail_user = None
-        gmail_password = None
-        if user_res.data:
-            db_user = user_res.data[0]
-            enc_email = db_user.get("encrypted_gmail_email")
-            enc_pass = db_user.get("encrypted_gmail_password")
-            if enc_email:
-                gmail_user = decrypt_key(enc_email)
-            if enc_pass:
-                gmail_password = decrypt_key(enc_pass)
+        # Resolve user or company teammate Gmail configurations from DB profile
+        from app.core.credentials import get_gmail_credentials
+        gmail_user, gmail_password = get_gmail_credentials(current_user["id"])
 
         # Attempt real SMTP dispatch via Gmail
         sent = send_smtp_email(to_address, subject, reply_body, gmail_user, gmail_password)

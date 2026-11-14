@@ -83,10 +83,10 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onUploadSuccess, max
         onDragLeave={handleDrag}
         onDrop={handleDrop}
         onClick={onButtonClick}
-        className={`w-full min-h-[180px] p-6 rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all duration-300 ${
+        className={`w-full min-h-[160px] p-5 rounded-md border border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors ${
           isDragActive
-            ? 'border-brand-500 bg-brand-500/5 shadow-glow-smScaleScale scale-98'
-            : 'border-slate-800 bg-slate-900/20 hover:border-slate-700 hover:bg-slate-900/30'
+            ? 'border-brand-500 bg-brand-500/5'
+            : 'border-slate-700 bg-slate-950 hover:border-slate-600'
         }`}
       >
         <input
@@ -100,21 +100,21 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onUploadSuccess, max
         
         {isUploading ? (
           <div className="flex flex-col items-center gap-3">
-            <div className="w-10 h-10 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-sm font-medium text-slate-300">Processing Knowledge Base Sheet...</p>
-            <p className="text-xs text-slate-500">FastAPI is parsing spreadsheets/PDF data...</p>
+            <div className="w-6 h-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-sm font-medium text-slate-300">Uploading and reading file</p>
+            <p className="text-xs text-slate-500">This can take a few seconds.</p>
           </div>
         ) : (
           <div className="flex flex-col items-center text-center gap-3">
-            <div className="w-12 h-12 rounded-lg bg-slate-800/80 flex items-center justify-center border border-slate-700/50">
-              <Upload className="w-6 h-6 text-brand-400 animate-pulse" />
+            <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center border border-slate-800">
+              <Upload className="w-5 h-5 text-slate-400" strokeWidth={1.75} />
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-200">
-                Drag and drop pricing sheets here, or <span className="text-brand-400">browse</span>
+              <p className="text-sm font-medium text-slate-200">
+                Drop a file here or <span className="text-brand-300 underline underline-offset-2">browse</span>
               </p>
               <p className="text-xs text-slate-500 mt-1">
-                Supports CSV, XLSX, XLS, PDF (Max {maxSizeMB}MB)
+                CSV, XLSX, XLS or PDF, up to {maxSizeMB} MB
               </p>
             </div>
           </div>
@@ -123,14 +123,14 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onUploadSuccess, max
 
       {/* Alert Feedbacks */}
       {errorMsg && (
-        <div className="mt-3 flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm animate-fadeIn">
+        <div className="alert alert-error mt-3" role="alert">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
       
       {successMsg && (
-        <div className="mt-3 flex items-center gap-2 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm animate-fadeIn">
+        <div className="alert alert-success mt-3" role="status">
           <CheckCircle className="w-4 h-4 shrink-0" />
           <span>{successMsg}</span>
         </div>

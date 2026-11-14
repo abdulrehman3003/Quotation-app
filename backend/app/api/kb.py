@@ -9,6 +9,9 @@ from app.services.parser import parse_file_content
 from supabase import create_client, Client
 from app.core.config import settings
 
+import logging
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/kb", tags=["Knowledge Base"])
 
 supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
@@ -44,9 +47,6 @@ def process_kb_file(
         
     try:
         # Download the file from Supabase Storage
-        logger_name = "app.api.kb"
-        import logging
-        logger = logging.getLogger(logger_name)
         logger.info(f"Downloading file {file_path} from storage...")
         
         file_bytes = supabase.storage.from_("knowledge_base").download(file_path)
@@ -81,9 +81,10 @@ def process_kb_file(
         )
     except Exception as e:
         logger.error(f"Failed to process knowledge base file {filename}: {str(e)}")
+        logger.error(f"Knowledge base processing failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge base processing failed: {str(e)}"
+            detail="Knowledge base processing failed"
         )
 
 @router.get("", response_model=List[KnowledgeBaseResponse])
@@ -97,11 +98,15 @@ def list_knowledge_files(current_user: dict = Depends(get_current_user)):
             .eq("company_id", current_user["company_id"])\
             .order("created_at", desc=True)\
             .execute()
+        from app.services.parser import normalize_extracted_text
+        for row in response.data or []:
+            row["parsed_content"] = normalize_extracted_text(row.get("parsed_content") or "")
         return response.data
     except Exception as e:
+        logger.error(f"Failed to retrieve knowledge base: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve knowledge base: {str(e)}"
+            detail="Failed to retrieve knowledge base"
         )
 
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -135,16 +140,16 @@ def delete_knowledge_file(kb_id: str, current_user: dict = Depends(get_current_u
             supabase.storage.from_("knowledge_base").remove([file_path])
         except Exception as storage_err:
             # Non-blocking, DB record is already clean
-            import logging
-            logging.getLogger("app.api.kb").warning(f"Failed to clean up storage path {file_path}: {str(storage_err)}")
+            logger.warning(f"Failed to clean up storage path {file_path}: {str(storage_err)}")
             
         return
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to delete knowledge base item: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete knowledge base item: {str(e)}"
+            detail="Failed to delete knowledge base item"
         )
 
 class KbUpdateInput(BaseModel):
@@ -186,7 +191,8 @@ def update_knowledge_file(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to update knowledge base file: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update knowledge base file: {str(e)}"
+            detail="Failed to update knowledge base file"
         )

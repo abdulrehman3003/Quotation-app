@@ -7,7 +7,7 @@ import logging
 import os
 
 from app.core.config import settings
-from app.api import leads, kb, quotes, emails, whatsapp, admin, users
+from app.api import leads, kb, quotes, emails, whatsapp, admin, users, public, automation, customers, oauth
 from supabase import create_client, Client
 
 supabase_client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
@@ -34,7 +34,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 db_handler = SupabaseDBHandler()
-db_handler.setLevel(logging.INFO)
+# WARNING and above only: every stored record is a synchronous HTTP insert, and
+# INFO-level request logging made each API call pay for several of them.
+db_handler.setLevel(logging.WARNING)
 logging.getLogger().addHandler(db_handler)
 
 app = FastAPI(
@@ -72,7 +74,11 @@ async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' https://cyatvsjgybtnkhyyetwi.supabase.co https://generativelanguage.googleapis.com; frame-ancestors 'none';"
+    supabase_origin = (settings.SUPABASE_URL or "").rstrip("/")
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'self' 'unsafe-inline' 'unsafe-eval' {supabase_origin} https://*.supabase.co https://generativelanguage.googleapis.com; "
+        "frame-ancestors 'none';"
+    )
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
@@ -84,6 +90,10 @@ app.include_router(emails.router, prefix="/api")
 app.include_router(whatsapp.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
+app.include_router(public.router, prefix="/api")
+app.include_router(automation.router, prefix="/api")
+app.include_router(customers.router, prefix="/api")
+app.include_router(oauth.router, prefix="/api")
 
 from app.services.email_poller import start_email_poller
 

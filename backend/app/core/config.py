@@ -18,11 +18,16 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = Field(..., env="SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY: str = Field(..., env="SUPABASE_SERVICE_ROLE_KEY")
     SUPABASE_JWT_SECRET: str = Field(..., env="SUPABASE_JWT_SECRET")
+    ENCRYPTION_KEY: str | None = Field(None, env="ENCRYPTION_KEY")
     
     # Gemini Settings (via OpenAI SDK compatibility)
     GEMINI_API_KEY: str | None = Field(None, env="GEMINI_API_KEY")
     OPENAI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    GEMINI_MODEL: str = "gemini-1.5-flash"  # or gemini-2.5-flash
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    # Tried in order when the main model is overloaded or has been retired by Google.
+    GEMINI_FALLBACK_MODELS: str = "gemini-3.5-flash,gemini-flash-latest"
+    # low | medium | high, or empty for the model's own default (slow: can exceed a minute per quote).
+    GEMINI_REASONING_EFFORT: str = "low"
     
     # Twilio WhatsApp Settings (Optional - falls back to mock)
     TWILIO_ACCOUNT_SID: str | None = Field(None, env="TWILIO_ACCOUNT_SID")
@@ -32,6 +37,38 @@ class Settings(BaseSettings):
     # Gmail IMAP Settings (Optional - falls back to mock)
     GMAIL_EMAIL: str | None = Field(None, env="GMAIL_EMAIL")
     GMAIL_APP_PASSWORD: str | None = Field(None, env="GMAIL_APP_PASSWORD")
+
+    # Background IMAP poller. Only one process per deployment should run it;
+    # set to false on extra replicas.
+    ENABLE_EMAIL_POLLER: bool = True
+    EMAIL_POLL_INTERVAL_SECONDS: int = 30
+
+    # When true, tenants without their own Gemini/Gmail/Twilio credentials
+    # silently use the admin user's credentials. Off by default: it lets any
+    # tenant send mail from / spend quota on the admin's accounts.
+    ALLOW_ADMIN_CREDENTIAL_FALLBACK: bool = False
+
+    # Shared secret required in the X-Webhook-Token header for POST /api/leads/webhook.
+    # The endpoint is disabled when unset.
+    WEBHOOK_SECRET_TOKEN: str | None = None
+
+    # Public base URL of this backend as Twilio sees it (e.g. https://api.example.com).
+    # Used to validate X-Twilio-Signature behind proxies. Falls back to the request URL.
+    PUBLIC_BACKEND_URL: str | None = None
+
+    # "Sign in with Google / Microsoft" for mailboxes. Register an OAuth app with each
+    # provider and add <PUBLIC_BACKEND_URL>/api/oauth/<provider>/callback as a redirect URI.
+    GOOGLE_OAUTH_CLIENT_ID: str | None = None
+    GOOGLE_OAUTH_CLIENT_SECRET: str | None = None
+    MICROSOFT_OAUTH_CLIENT_ID: str | None = None
+    MICROSOFT_OAUTH_CLIENT_SECRET: str | None = None
+
+    # Knowledge base text sent with each quote request is capped at this many
+    # characters; above it only the parts most relevant to the request are sent.
+    KB_CONTEXT_MAX_CHARS: int = 60000
+
+    # How often the background worker looks for sent quotes due an automatic follow-up.
+    FOLLOW_UP_CHECK_INTERVAL_SECONDS: int = 900
 
     # Server Settings
     PORT: int = 8000

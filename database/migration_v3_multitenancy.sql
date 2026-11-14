@@ -17,12 +17,23 @@ on conflict (id) do nothing;
 alter table public.users add column if not exists company_id uuid references public.companies(id) on delete set null;
 update public.users set company_id = '00000000-0000-0000-0000-000000000000' where company_id is null;
 
--- Ensure handle_new_user trigger automatically assigns new signups to the Default Company
+-- Ensure handle_new_user trigger automatically creates an isolated company per signup
 create or replace function public.handle_new_user()
 returns trigger as $$
+declare
+  target_company_id uuid;
+  meta_company_name text;
 begin
+  meta_company_name := nullif(trim(coalesce(new.raw_user_meta_data->>'company_name', '')), '');
+  insert into public.companies (name)
+  values (coalesce(meta_company_name, split_part(new.email, '@', 1) || '''s Workspace'))
+  returning id into target_company_id;
+
   insert into public.users (id, email, company_id)
-  values (new.id, new.email, '00000000-0000-0000-0000-000000000000');
+  values (new.id, lower(trim(new.email)), target_company_id)
+  on conflict (id) do update
+    set email = excluded.email,
+        company_id = coalesce(public.users.company_id, excluded.company_id);
   return new;
 end;
 $$ language plpgsql security definer;

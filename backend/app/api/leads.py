@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from typing import List
 from app.core.security import get_current_user
 from app.schemas.pydantic_models import LeadCreate, LeadResponse
 from supabase import create_client, Client
 from app.core.config import settings
+
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leads", tags=["Leads"])
 
@@ -33,9 +36,10 @@ def create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_user)
             
         return response.data[0]
     except Exception as e:
+        logger.error(f"Failed to create lead: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create lead: {str(e)}"
+            detail="Failed to create lead"
         )
 
 @router.get("", response_model=List[LeadResponse])
@@ -51,9 +55,10 @@ def list_leads(current_user: dict = Depends(get_current_user)):
             .execute()
         return response.data
     except Exception as e:
+        logger.error(f"Failed to retrieve leads: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve leads: {str(e)}"
+            detail="Failed to retrieve leads"
         )
 
 @router.get("/{lead_id}", response_model=LeadResponse)
@@ -78,9 +83,10 @@ def get_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to retrieve lead: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve lead: {str(e)}"
+            detail="Failed to retrieve lead"
         )
 
 @router.delete("/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -107,9 +113,10 @@ def delete_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to delete lead: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete lead: {str(e)}"
+            detail="Failed to delete lead"
         )
 
 # Webhook lead ingestion endpoint (e.g. from postmark, sendgrid, or custom email forwarder)
@@ -117,18 +124,22 @@ def delete_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
 def lead_webhook(payload: dict, request: Request):
     """
     Public webhook route for automatic email ingestion.
-    Requires WEBHOOK_SECRET_TOKEN environment token verification.
+    Requires the X-Webhook-Token header to match WEBHOOK_SECRET_TOKEN; disabled when unset.
     """
-    import os
-    expected_token = os.getenv("WEBHOOK_SECRET_TOKEN")
-    if expected_token:
-        webhook_token = request.headers.get("X-Webhook-Token")
-        if not webhook_token or webhook_token != expected_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid webhook token"
-            )
-            
+    import hmac
+    expected_token = settings.WEBHOOK_SECRET_TOKEN
+    if not expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lead webhook is disabled (WEBHOOK_SECRET_TOKEN not configured)"
+        )
+    webhook_token = request.headers.get("X-Webhook-Token") or ""
+    if not hmac.compare_digest(webhook_token, expected_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook token"
+        )
+
     try:
         # Expected keys: user_id (tenant routing), subject, html/text body
         user_id = payload.get("user_id")
@@ -160,9 +171,10 @@ def lead_webhook(payload: dict, request: Request):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Webhook ingestion failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Webhook ingestion failed: {str(e)}"
+            detail="Webhook ingestion failed"
         )
 
 @router.post("/{lead_id}/reimport", response_model=LeadResponse)
@@ -185,8 +197,9 @@ def reimport_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
                 detail="Lead not found or unauthorized"
             )
             
-        # Delete existing quote drafts for this lead
-        supabase.table("quotes").delete().eq("lead_id", lead_id).eq("company_id", current_user["company_id"]).execute()
+        # Delete unsent drafts only. Quotes that were already sent stay on record
+        # (customer link, reports, win rate); the next quote is a revision.
+        supabase.table("quotes").delete().eq("lead_id", lead_id).eq("company_id", current_user["company_id"]).eq("status", "draft").execute()
         
         # Reset status to pending
         res = supabase.table("leads").update({"status": "pending"}).eq("id", lead_id).execute()
@@ -194,7 +207,42 @@ def reimport_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to reimport lead: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to reimport lead: {str(e)}"
+            detail="Failed to reimport lead"
         )
+
+
+@router.post("/{lead_id}/part-file")
+async def add_part_file(lead_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """
+    Measures a DXF or STL part file and appends the measurements to the lead's
+    request text, so the quote is priced from real cut length / volume.
+    The file itself is not stored.
+    """
+    from app.services.geometry import analyze_part_file, describe_geometry, GeometryError, MAX_PART_FILE_BYTES
+
+    check = supabase.table("leads").select("*").eq("id", lead_id).eq("company_id", current_user["company_id"]).execute()
+    if not check.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found or unauthorized")
+    lead = check.data[0]
+    if lead.get("status") == "dispatched":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This lead's quote was already sent. Use Revise first.")
+
+    data = await file.read(MAX_PART_FILE_BYTES + 1)
+    try:
+        geometry = analyze_part_file(file.filename or "", data)
+    except GeometryError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Part file analysis failed: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This part file could not be analysed.")
+
+    block = describe_geometry(file.filename or "part", geometry)
+    try:
+        res = supabase.table("leads").update({"raw_text": f"{lead['raw_text'].rstrip()}\n\n{block}"}).eq("id", lead_id).execute()
+        return {"lead": res.data[0], "geometry": geometry}
+    except Exception as e:
+        logger.error(f"Failed to attach part geometry to lead {lead_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save the part measurements")

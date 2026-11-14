@@ -18,6 +18,8 @@ export interface ItemizedCost {
   quantity: number
   unit_price: number
   total_price: number
+  category?: 'material' | 'labor' | 'other'
+  needs_review?: boolean
 }
 
 export interface Quote {
@@ -31,6 +33,133 @@ export interface Quote {
   email_draft: string
   status: string
   created_at: string
+  quote_number?: string | null
+  currency?: string | null
+  subtotal?: number | null
+  discount_percent?: number | null
+  tax_percent?: number | null
+  valid_until?: string | null
+  customer_name?: string | null
+  customer_email?: string | null
+  customer_phone?: string | null
+  customer_company?: string | null
+  review_notes?: string[]
+  public_token?: string | null
+  sent_at?: string | null
+  first_viewed_at?: string | null
+  last_viewed_at?: string | null
+  view_count?: number | null
+  outcome?: 'accepted' | 'declined' | null
+  outcome_source?: string | null
+  responded_at?: string | null
+  customer_comment?: string | null
+  delivery?: 'email' | 'manual' | null
+  sent_to?: string | null
+}
+
+export interface DispatchOptions {
+  mode?: 'email' | 'manual'
+  confirm_unpriced?: boolean
+  include_link?: boolean
+}
+
+export interface CustomerSummary {
+  key: string
+  name: string | null
+  email: string | null
+  phone: string | null
+  company: string | null
+  quotes: number
+  sent: number
+  won: number
+  lost: number
+  open: number
+  quoted_value: number
+  won_value: number
+  win_rate: number | null
+  last_activity: string | null
+  currency: string
+}
+
+export interface CustomerHistory {
+  customer: CustomerSummary
+  quotes: {
+    id: string
+    lead_id: string | null
+    quote_number: string | null
+    date: string
+    status: string
+    outcome: string | null
+    total: number
+    currency: string
+    items: { description: string; quantity: number; unit_price: number; total_price: number }[]
+  }[]
+  price_history: {
+    description: string
+    prices: { date: string; unit_price: number; quantity: number; quote_number: string | null; outcome: string | null }[]
+  }[]
+}
+
+export interface MailConnectionStatus {
+  providers: Record<string, { configured: boolean; redirect_uri: string }>
+  connection: { provider: string; email: string } | null
+}
+
+export interface WhatsAppStatus {
+  credentials_saved: boolean
+  credentials_valid: boolean | null
+  credentials_error: string | null
+  sender_number: string | null
+  webhook_url: string
+  webhook_public: boolean
+}
+
+export interface AutomationSettings {
+  auto_draft_quotes: boolean
+  auto_follow_up: boolean
+  follow_up_after_days: number
+  webhook_url: string | null
+  webhook_secret: string | null
+}
+
+export interface QuoteAnalytics {
+  drafts: number
+  sent: number
+  viewed: number
+  accepted: number
+  declined: number
+  open: number
+  win_rate: number | null
+  quoted_value: number
+  won_value: number
+  open_value: number
+  median_response_hours: number | null
+  needs_follow_up: string[]
+  follow_up_after_days: number
+}
+
+// Error thrown by API calls; `code` carries machine-readable reasons such as
+// 'unpriced_items' or 'no_mailbox' so the UI can offer the right next step.
+export class ApiError extends Error {
+  code?: string
+  constructor(message: string, code?: string) {
+    super(message)
+    this.code = code
+  }
+}
+
+const toApiError = async (res: Response, fallback: string): Promise<ApiError> => {
+  try {
+    const data = await res.json()
+    const detail = data?.detail
+    if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+      return new ApiError(detail.message || fallback, detail.code)
+    }
+    if (typeof detail === 'string') return new ApiError(detail)
+  } catch {
+    // non-JSON error body
+  }
+  return new ApiError(fallback)
 }
 
 export interface KbFile {
@@ -75,11 +204,26 @@ interface WorkspaceState {
   quotes: Quote[]
   kbFiles: KbFile[]
   emails: CustomerEmail[]
+  // null = not checked yet; false = no mailbox connected in settings
+  emailConfigured: boolean | null
   whatsappChats: WhatsAppChat[]
   whatsappMessages: WhatsAppMessage[]
   dispatchedQuotes: any[]
   loadingDispatched: boolean
   userProfile: any | null
+  teamInfo: {
+    company_id: string
+    company_name: string
+    invite_token: string
+    members: Array<{
+      id: string
+      name: string
+      email: string
+      role: string
+      phone_number?: string
+      created_at?: string
+    }>
+  } | null
   adminUsers: any[]
   systemStatus: any | null
   systemLogs: any[]
@@ -107,12 +251,32 @@ interface WorkspaceState {
   updateKbFileContent: (kbId: string, filename: string, content: string) => Promise<void>
   runAiEngine: (leadId: string) => Promise<void>
   updateQuote: (quoteId: string, updates: Partial<Quote>) => Promise<void>
-  dispatchQuote: (quoteId: string) => Promise<void>
+  dispatchQuote: (quoteId: string, options?: DispatchOptions) => Promise<Quote>
+  setQuoteOutcome: (quoteId: string, outcome: 'accepted' | 'declined' | null) => Promise<void>
+  quoteAnalytics: QuoteAnalytics | null
+  fetchQuoteAnalytics: () => Promise<void>
   fetchDispatchedQuotes: () => Promise<void>
   reimportLead: (leadId: string) => Promise<void>
   fetchProfile: () => Promise<any>
-  updateProfile: (profileData: any) => Promise<void>
-  changePassword: (password: string) => Promise<void>
+  updateProfile: (profileData: any) => Promise<any>
+  completeOnboarding: (onboardingData: any) => Promise<any>
+  seedSampleKb: () => Promise<void>
+  fetchTeam: () => Promise<any>
+  verifyInviteToken: (token: string) => Promise<any>
+  acceptTeamInvite: (inviteToken: string, name?: string) => Promise<any>
+  changePassword: (currentPassword: string, password: string) => Promise<void>
+  automation: AutomationSettings | null
+  customers: CustomerSummary[]
+  loadingCustomers: boolean
+  fetchCustomers: () => Promise<void>
+  fetchCustomerHistory: (key: string) => Promise<CustomerHistory | null>
+  uploadPartFile: (leadId: string, file: File) => Promise<void>
+  mailConnection: MailConnectionStatus | null
+  fetchMailConnection: () => Promise<void>
+  startMailConnect: (provider: string) => Promise<void>
+  disconnectMail: () => Promise<void>
+  fetchAutomation: () => Promise<void>
+  saveAutomation: (changes: Partial<AutomationSettings>) => Promise<void>
   adminListUsers: () => Promise<any[]>
   adminCreateUser: (data: any) => Promise<void>
   adminUpdateUser: (userId: string, data: any) => Promise<void>
@@ -131,7 +295,9 @@ interface WorkspaceState {
   fetchChats: () => Promise<void>
   setActiveChat: (chat: WhatsAppChat | null) => Promise<void>
   fetchChatMessages: (chatId: string) => Promise<void>
-  sendWhatsAppMessage: (chatId: string, text: string) => Promise<void>
+  sendWhatsAppMessage: (chatId: string, text: string) => Promise<{ delivered: boolean; reason: string | null }>
+  whatsappStatus: WhatsAppStatus | null
+  fetchWhatsAppStatus: () => Promise<void>
   toggleTakeover: (chatId: string, statusMode: 'active_ai' | 'human_required') => Promise<void>
   exportWhatsAppLeads: () => Promise<void>
   notifications: Array<{ id: string; title: string; description: string; type: 'email' | 'whatsapp'; created_at: string; read: boolean }>
@@ -142,12 +308,6 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   // Helper to fetch Auth headers
   const getAuthHeaders = async (): Promise<Record<string, string>> => {
-    if (window.location.hostname.startsWith('admin.')) {
-      return {
-        'X-Admin-Auth': 'admin',
-        'Content-Type': 'application/json'
-      }
-    }
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) throw new Error("No active authenticated session")
     return {
@@ -161,11 +321,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     quotes: [],
     kbFiles: [],
     emails: [],
+    emailConfigured: null,
     whatsappChats: [],
     whatsappMessages: [],
     dispatchedQuotes: [],
     loadingDispatched: false,
+    quoteAnalytics: null,
+    automation: null,
+    whatsappStatus: null,
+    customers: [],
+    loadingCustomers: false,
+    mailConnection: null,
     userProfile: null,
+    teamInfo: null,
     adminUsers: [],
     adminSettings: null,
     systemStatus: null,
@@ -382,7 +550,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           headers,
           body: JSON.stringify(updates)
         })
-        if (!res.ok) throw new Error("Failed to update quote changes")
+        if (!res.ok) throw await toApiError(res, "Failed to save quote changes")
         const quote = await res.json()
         set({ activeQuote: quote })
       } catch (err: any) {
@@ -391,24 +559,47 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
     },
 
-    dispatchQuote: async (quoteId: string) => {
+    dispatchQuote: async (quoteId: string, options: DispatchOptions = {}) => {
       set({ error: null })
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/quotes/${quoteId}/dispatch`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(options)
+      })
+      // Not stored in `error`: the caller turns coded failures (unpriced items,
+      // no mailbox) into a follow-up question instead of a banner.
+      if (!res.ok) throw await toApiError(res, "Failed to send quote")
+      const quote = await res.json()
+      set({ activeQuote: quote })
+      return quote
+    },
+
+    setQuoteOutcome: async (quoteId: string, outcome: 'accepted' | 'declined' | null) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/quotes/${quoteId}/outcome`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ outcome })
+      })
+      if (!res.ok) throw await toApiError(res, "Failed to update the quote outcome")
+      const quote = await res.json()
+      if (get().activeQuote?.id === quoteId) set({ activeQuote: quote })
+      set({
+        dispatchedQuotes: get().dispatchedQuotes.map((q: any) =>
+          q.id === quoteId ? { ...q, outcome: quote.outcome, outcome_source: quote.outcome_source } : q
+        )
+      })
+    },
+
+    fetchQuoteAnalytics: async () => {
       try {
         const headers = await getAuthHeaders()
-        const res = await fetch(`${BACKEND_URL}/api/quotes/${quoteId}/dispatch`, {
-          method: 'POST',
-          headers
-        })
-        if (!res.ok) {
-          const errData = await res.json()
-          throw new Error(errData.detail || "Failed to dispatch quote")
-        }
-        const quote = await res.json()
-        set({ activeQuote: quote })
-        return quote
-      } catch (err: any) {
-        set({ error: err.message })
-        throw err
+        const res = await fetch(`${BACKEND_URL}/api/quotes/analytics`, { headers })
+        if (!res.ok) return
+        set({ quoteAnalytics: await res.json() })
+      } catch {
+        // Analytics are supplementary; the report table still renders without them.
       }
     },
 
@@ -417,10 +608,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       set({ loadingEmails: true, error: null })
       try {
         const headers = await getAuthHeaders()
+        // The inbox stays empty until a mailbox is connected in settings.
+        const statusRes = await fetch(`${BACKEND_URL}/api/emails/status`, { headers })
+        if (!statusRes.ok) throw new Error("Failed to load customer emails")
+        const { configured } = await statusRes.json()
+        if (!configured) {
+          set((state) => ({
+            emails: [],
+            emailConfigured: false,
+            loadingEmails: false,
+            notifications: state.notifications.filter((n) => n.type !== 'email')
+          }))
+          return
+        }
         const res = await fetch(`${BACKEND_URL}/api/emails`, { headers })
         if (!res.ok) throw new Error("Failed to load customer emails")
         const data = await res.json()
-        set({ emails: data, loadingEmails: false })
+        set({ emails: data, emailConfigured: true, loadingEmails: false })
         
         // Add notifications for unread emails
         data.forEach((email: any) => {
@@ -448,7 +652,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           method: 'POST',
           headers
         })
-        if (!res.ok) throw new Error("Failed to transfer email to leads")
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to transfer email to leads")
+        }
         await get().fetchEmails()
         await get().fetchLeads()
       } catch (err: any) {
@@ -538,10 +745,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           body: JSON.stringify({ text })
         })
         if (!res.ok) throw new Error("Failed to dispatch manual text")
+        const result = await res.json()
         await get().fetchChatMessages(chatId)
+        return { delivered: result.delivered !== false, reason: result.reason || null }
       } catch (err: any) {
         set({ error: err.message })
         throw err
+      }
+    },
+
+    fetchWhatsAppStatus: async () => {
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`, { headers })
+        if (res.ok) set({ whatsappStatus: await res.json() })
+      } catch {
+        // The banner simply stays hidden if the check cannot run.
       }
     },
 
@@ -643,22 +862,212 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           headers,
           body: JSON.stringify(profileData)
         })
-        if (!res.ok) throw new Error("Failed to update profile")
-        await get().fetchProfile()
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to update profile")
+        }
+        const data = await res.json()
+        if (data?.profile) {
+          set({ userProfile: data.profile })
+          return data.profile
+        }
+        return await get().fetchProfile()
       } catch (err: any) {
         set({ error: err.message })
         throw err
       }
     },
 
-    changePassword: async (password: string) => {
+    completeOnboarding: async (onboardingData: any) => {
+      set({ error: null })
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/users/onboarding`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(onboardingData)
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to complete onboarding setup")
+        }
+        const data = await res.json()
+        if (data?.profile) {
+          set({ userProfile: data.profile })
+          return data.profile
+        }
+        return await get().fetchProfile()
+      } catch (err: any) {
+        set({ error: err.message })
+        throw err
+      }
+    },
+
+    seedSampleKb: async () => {
+      set({ loadingKb: true, error: null })
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/users/onboarding/sample-kb`, {
+          method: 'POST',
+          headers
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to load sample pricing catalog")
+        }
+        await get().fetchKbFiles()
+      } catch (err: any) {
+        set({ error: err.message, loadingKb: false })
+        throw err
+      }
+    },
+
+    fetchTeam: async () => {
+      set({ error: null })
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/users/team`, { headers })
+        if (!res.ok) throw new Error("Failed to load team workspace details")
+        const data = await res.json()
+        set({ teamInfo: data })
+        return data
+      } catch (err: any) {
+        set({ error: err.message })
+        throw err
+      }
+    },
+
+    verifyInviteToken: async (token: string) => {
+      const res = await fetch(
+        `${BACKEND_URL}/api/users/team/invite-info?token=${encodeURIComponent(token)}`
+      )
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || "Invalid or expired invitation link")
+      }
+      return await res.json()
+    },
+
+    acceptTeamInvite: async (inviteToken: string, name?: string) => {
+      set({ error: null })
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/users/team/accept-invite`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ invite_token: inviteToken, name })
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to join team workspace")
+        }
+        const data = await res.json()
+        if (data?.profile) {
+          set({ userProfile: data.profile })
+        }
+        return data
+      } catch (err: any) {
+        set({ error: err.message })
+        throw err
+      }
+    },
+
+    fetchCustomers: async () => {
+      set({ loadingCustomers: true })
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/customers`, { headers })
+        if (!res.ok) throw new Error("Failed to load customers")
+        set({ customers: await res.json(), loadingCustomers: false })
+      } catch (err: any) {
+        set({ error: err.message, loadingCustomers: false })
+      }
+    },
+
+    fetchCustomerHistory: async (key: string) => {
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/customers/history?key=${encodeURIComponent(key)}`, { headers })
+        if (!res.ok) return null
+        return await res.json()
+      } catch {
+        return null
+      }
+    },
+
+    uploadPartFile: async (leadId: string, file: File) => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error("No active authenticated session")
+      const form = new FormData()
+      form.append('file', file)
+      // No Content-Type header: the browser sets the multipart boundary itself.
+      const res = await fetch(`${BACKEND_URL}/api/leads/${leadId}/part-file`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: form
+      })
+      if (!res.ok) throw await toApiError(res, "The part file could not be measured")
+      const data = await res.json()
+      set({
+        leads: get().leads.map((l) => (l.id === leadId ? data.lead : l)),
+        activeLead: get().activeLead?.id === leadId ? data.lead : get().activeLead,
+      })
+    },
+
+    fetchMailConnection: async () => {
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/oauth/status`, { headers })
+        if (res.ok) set({ mailConnection: await res.json() })
+      } catch {
+        // Settings falls back to the app-password form.
+      }
+    },
+
+    startMailConnect: async (provider: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/oauth/${provider}/start`, { headers })
+      if (!res.ok) throw await toApiError(res, "Could not start the sign-in")
+      const { url } = await res.json()
+      window.location.assign(url)
+    },
+
+    disconnectMail: async () => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/oauth/connection`, { method: 'DELETE', headers })
+      if (!res.ok) throw await toApiError(res, "Could not disconnect the mailbox")
+      await get().fetchMailConnection()
+    },
+
+    fetchAutomation: async () => {
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/automation`, { headers })
+        if (res.ok) set({ automation: await res.json() })
+      } catch {
+        // Settings page shows the defaults if this fails.
+      }
+    },
+
+    saveAutomation: async (changes: Partial<AutomationSettings>) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/automation`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(changes)
+      })
+      if (!res.ok) throw await toApiError(res, "Failed to save automation settings")
+      set({ automation: await res.json() })
+    },
+
+    changePassword: async (currentPassword: string, password: string) => {
       set({ error: null })
       try {
         const headers = await getAuthHeaders()
         const res = await fetch(`${BACKEND_URL}/api/users/change-password`, {
           method: 'PUT',
           headers,
-          body: JSON.stringify({ new_password: password })
+          body: JSON.stringify({ current_password: currentPassword, new_password: password })
         })
         if (!res.ok) {
           const errData = await res.json()

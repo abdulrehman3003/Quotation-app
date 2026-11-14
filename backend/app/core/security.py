@@ -4,74 +4,130 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
 from supabase import create_client, Client
+import logging
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
+
+DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000000'
 
 # Initialize Supabase client for token verification
 supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+
+def _provision_isolated_company(user_id: str, email: str | None = None, preferred_name: str | None = None) -> str:
     """
-    Dependency to get the currently authenticated user from the Supabase JWT.
-    Enforces server-side authentication validation.
+    Creates a dedicated company row for a tenant user and migrates any records
+    created by this user away from DEFAULT_COMPANY_ID so tenants are strictly isolated.
     """
-    token = credentials.credentials
+    workspace_label = (preferred_name or "").strip()
+    if not workspace_label:
+        prefix = (email or "user").split("@")[0].strip() or "User"
+        workspace_label = f"{prefix}'s Workspace"
     try:
-        # 1. Decodes the JWT using HS256 and the Supabase JWT Secret.
+        comp_res = supabase.table("companies").insert({"name": workspace_label}).execute()
+        if comp_res.data and comp_res.data[0].get("id"):
+            new_company_id = comp_res.data[0]["id"]
+            supabase.table("users").update({"company_id": new_company_id}).eq("id", user_id).execute()
+            # Migrate any existing user-owned records from DEFAULT_COMPANY_ID to the user's isolated company
+            for tbl in ("leads", "quotes", "knowledge_base", "customer_emails", "whatsapp_chats", "dispatched_quotes"):
+                try:
+                    supabase.table(tbl).update({"company_id": new_company_id})\
+                        .eq("user_id", user_id)\
+                        .eq("company_id", DEFAULT_COMPANY_ID)\
+                        .execute()
+                except Exception:
+                    pass
+            return new_company_id
+    except Exception as e:
+        logger.warning(f"Failed to provision isolated company for user {user_id}: {str(e)}")
+    return DEFAULT_COMPANY_ID
+
+
+def _load_profile_fields(user_id: str, email: str | None = None) -> dict:
+    """
+    Returns company_id and role for a user from public.users.
+    Automatically provisions a profile and an isolated company if missing or if a
+    regular user is still attached to the shared DEFAULT_COMPANY_ID.
+    """
+    company_id = DEFAULT_COMPANY_ID
+    role = "user"
+    try:
+        user_res = supabase.table("users").select("company_id", "role", "name", "default_quote_parameters").eq("id", user_id).execute()
+        if user_res.data:
+            row = user_res.data[0]
+            company_id = row.get("company_id") or DEFAULT_COMPANY_ID
+            role = row.get("role") or "user"
+            params = row.get("default_quote_parameters") or {}
+            preferred_company = params.get("company_name") if isinstance(params, dict) else None
+            # Security fix: isolate non-admin users who were placed in the shared DEFAULT_COMPANY_ID
+            if role != "admin" and company_id == DEFAULT_COMPANY_ID:
+                company_id = _provision_isolated_company(user_id, email=email, preferred_name=preferred_company)
+        else:
+            # Profile row missing from public.users: create isolated company + upsert profile
+            company_id = _provision_isolated_company(user_id, email=email)
+            supabase.table("users").upsert({
+                "id": user_id,
+                "email": (email or "").strip().lower(),
+                "role": "user",
+                "company_id": company_id
+            }, on_conflict="id").execute()
+    except Exception as e:
+        logger.warning(f"Failed to load profile fields for user {user_id}: {str(e)}")
+    return {"company_id": company_id, "role": role}
+
+
+def resolve_user_from_token(token: str) -> dict:
+    """
+    Validates a Supabase access token and returns {id, email, company_id, role}.
+    Tries local HS256 verification first, then falls back to the Supabase Auth API
+    (handles asymmetric signing keys). Raises HTTPException(401) on failure.
+    """
+    user_id = None
+    email = None
+    try:
         payload = jwt.decode(
             token,
             settings.SUPABASE_JWT_SECRET,
             algorithms=["HS256"],
             options={"verify_aud": False}  # Supabase aud is typically 'authenticated'
         )
-        
         user_id = payload.get("sub")
         email = payload.get("email")
-        
         if not user_id:
             raise JWTError("Invalid token: missing subject claim")
-            
-        # Fetch the user profile from public.users to get the company_id
-        company_id = '00000000-0000-0000-0000-000000000000'
-        try:
-            user_res = supabase.table("users").select("company_id").eq("id", user_id).execute()
-            if user_res.data and user_res.data[0].get("company_id"):
-                company_id = user_res.data[0]["company_id"]
-        except Exception:
-            pass
-
-        return {
-            "id": user_id,
-            "email": email,
-            "company_id": company_id
-        }
-    except JWTError as e:
-        # 2. Fallback to Supabase Auth API verification (handles RS256 or other custom token algorithms)
+    except JWTError:
         try:
             res = supabase.auth.get_user(token)
-            if not res or not res.user:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid token verification: {str(e)}"
-                )
-            
-            user_id = res.user.id
-            company_id = '00000000-0000-0000-0000-000000000000'
-            try:
-                user_res = supabase.table("users").select("company_id").eq("id", user_id).execute()
-                if user_res.data and user_res.data[0].get("company_id"):
-                    company_id = user_res.data[0]["company_id"]
-            except Exception:
-                pass
-
-            return {
-                "id": user_id,
-                "email": res.user.email,
-                "company_id": company_id
-            }
-        except Exception as api_err:
+        except Exception:
+            res = None
+        if not res or not res.user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Token validation failed: {str(api_err)}"
+                detail="Invalid or expired authentication token"
             )
+        user_id = res.user.id
+        email = res.user.email
 
+    return {"id": user_id, "email": email, **_load_profile_fields(user_id, email=email)}
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """
+    Dependency to get the currently authenticated user from the Supabase JWT.
+    Enforces server-side authentication validation.
+    """
+    return resolve_user_from_token(credentials.credentials)
+
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """
+    Dependency that only allows users whose public.users.role is 'admin'.
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Admin role required."
+        )
+    return current_user
