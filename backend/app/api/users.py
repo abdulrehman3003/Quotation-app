@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from app.core.security import get_current_user, DEFAULT_COMPANY_ID, _provision_isolated_company
 from app.core.encryption import encrypt_key, decrypt_key
+from app.core import tenancy
 from supabase import create_client, Client
 from app.core.config import settings
 import logging
@@ -284,6 +285,9 @@ def accept_team_invite(
                     "onboarding_completed": True
                 }
 
+        # The joiner's own mailbox / WhatsApp number must not belong to a third company.
+        tenancy.assert_user_can_join(current_user["id"], target_company_id)
+
         existing_res = supabase.table("users").select("*").eq("id", current_user["id"]).execute()
         existing = existing_res.data[0] if existing_res.data else {}
         existing_name = existing.get("name")
@@ -332,6 +336,12 @@ def update_profile(
         existing_params = existing.get("default_quote_parameters")
         if not isinstance(existing_params, dict):
             existing_params = {}
+
+        tenancy.assert_no_credential_clash(
+            current_user["id"],
+            existing.get("company_id") or current_user.get("company_id") or DEFAULT_COMPANY_ID,
+            data.gmail_email, data.twilio_phone
+        )
 
         update_data = {}
         if data.name is not None:
@@ -390,6 +400,8 @@ def update_profile(
 
         refreshed = supabase.table("users").select("*").eq("id", current_user["id"]).execute()
         return {"status": "success", "profile": _serialize_profile(refreshed.data[0])}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to update profile: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to save profile changes")
@@ -409,6 +421,12 @@ def complete_onboarding(
         existing_params = existing.get("default_quote_parameters")
         if not isinstance(existing_params, dict):
             existing_params = {}
+
+        tenancy.assert_no_credential_clash(
+            current_user["id"],
+            existing.get("company_id") or current_user.get("company_id") or DEFAULT_COMPANY_ID,
+            data.gmail_email, data.twilio_phone
+        )
 
         clean_company = data.company_name.strip()
         company_id = _upsert_company_name(
@@ -459,6 +477,8 @@ def complete_onboarding(
 
         refreshed = supabase.table("users").select("*").eq("id", current_user["id"]).execute()
         return {"status": "success", "profile": _serialize_profile(refreshed.data[0])}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to complete onboarding for user {current_user['id']}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to complete onboarding setup")

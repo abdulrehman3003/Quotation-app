@@ -18,7 +18,9 @@ import {
   CheckCircle,
   AlertTriangle,
   Plus,
-  X
+  X,
+  Building2,
+  Check
 } from 'lucide-react'
 
 export default function AdminPanel() {
@@ -31,6 +33,11 @@ export default function AdminPanel() {
     adminCreateUser,
     adminUpdateUser,
     adminDeleteUser,
+    adminCompanies,
+    adminListCompanies,
+    adminCreateCompany,
+    adminRenameCompany,
+    adminDeleteCompany,
     fetchSystemStatus,
     fetchSystemLogs,
     fetchAdminSettings,
@@ -38,7 +45,7 @@ export default function AdminPanel() {
     error
   } = useWorkspaceStore()
 
-  const [activeTab, setActiveTab] = useState<'users' | 'keys' | 'database' | 'settings' | 'logs'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'companies' | 'keys' | 'database' | 'settings' | 'logs'>('users')
   const [loading, setLoading] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   
@@ -53,6 +60,14 @@ export default function AdminPanel() {
   const [createName, setCreateName] = useState('')
   const [createPhone, setCreatePhone] = useState('')
   const [createRole, setCreateRole] = useState('user')
+  // 'new' creates a separate company for the user; otherwise it is an existing company id
+  const [createCompany, setCreateCompany] = useState('new')
+  const [createCompanyName, setCreateCompanyName] = useState('')
+
+  // Companies tab state
+  const [newCompanyName, setNewCompanyName] = useState('')
+  const [renamingCompanyId, setRenamingCompanyId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   // User edit state
   const [editingUser, setEditingUser] = useState<any | null>(null)
@@ -66,16 +81,18 @@ export default function AdminPanel() {
   const [editTwilioSid, setEditTwilioSid] = useState('')
   const [editTwilioToken, setEditTwilioToken] = useState('')
   const [editTwilioPhone, setEditTwilioPhone] = useState('')
+  const [editCompanyId, setEditCompanyId] = useState('')
   
   useEffect(() => {
     setLoading(true)
     Promise.all([
       adminListUsers(),
+      adminListCompanies().catch(() => {}),
       fetchSystemStatus(),
       fetchSystemLogs(),
       fetchAdminSettings().catch(() => {})
     ]).finally(() => setLoading(false))
-  }, [adminListUsers, fetchSystemStatus, fetchSystemLogs, fetchAdminSettings])
+  }, [adminListUsers, adminListCompanies, fetchSystemStatus, fetchSystemLogs, fetchAdminSettings])
 
   useEffect(() => {
     if (adminSettings) {
@@ -96,12 +113,12 @@ export default function AdminPanel() {
     setEditTwilioSid('')
     setEditTwilioToken('')
     setEditTwilioPhone('')
+    setEditCompanyId(user.company_id || '')
   }
 
   const handleUpdateSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingUser) return
-    setLoading(true)
     setStatusMessage(null)
     
     const updateData: any = {
@@ -117,7 +134,18 @@ export default function AdminPanel() {
     if (editTwilioSid) updateData.twilio_sid = editTwilioSid
     if (editTwilioToken) updateData.twilio_token = editTwilioToken
     if (editTwilioPhone) updateData.twilio_phone = editTwilioPhone
+    if (editCompanyId && editCompanyId !== (editingUser.company_id || '')) {
+      const target = adminCompanies.find(c => c.id === editCompanyId)
+      const ok = window.confirm(
+        `Move ${editingUser.email} to "${target?.name || 'the selected company'}"?\n\n` +
+        `They will see that company's leads, quotes and knowledge base, and share its mailbox and API keys. ` +
+        `If they were the only member of their current company, their records move with them.`
+      )
+      if (!ok) return
+      updateData.company_id = editCompanyId
+    }
 
+    setLoading(true)
     try {
       await adminUpdateUser(editingUser.id, updateData)
       setEditingUser(null)
@@ -153,13 +181,18 @@ export default function AdminPanel() {
         password: createPassword,
         name: createName || undefined,
         phone_number: createPhone || undefined,
-        role: createRole
+        role: createRole,
+        ...(createCompany === 'new'
+          ? { new_company_name: createCompanyName.trim() || undefined }
+          : { company_id: createCompany })
       })
       setCreateEmail('')
       setCreatePassword('')
       setCreateName('')
       setCreatePhone('')
       setCreateRole('user')
+      setCreateCompany('new')
+      setCreateCompanyName('')
       setShowCreateModal(false)
       setStatusMessage('New user account created successfully.')
     } catch (err: any) {
@@ -169,10 +202,26 @@ export default function AdminPanel() {
     }
   }
 
+  const runCompanyAction = async (action: () => Promise<unknown>, success: string) => {
+    setLoading(true)
+    setStatusMessage(null)
+    try {
+      await action()
+      setStatusMessage(success)
+      return true
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Company action failed.')
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleRefresh = async () => {
     setLoading(true)
     await Promise.all([
       adminListUsers(),
+      adminListCompanies().catch(() => {}),
       fetchSystemStatus(),
       fetchSystemLogs()
     ])
@@ -268,6 +317,16 @@ export default function AdminPanel() {
             <Users className="h-4 w-4" />
             User Management
           </button>
+
+          <button
+            onClick={() => setActiveTab('companies')}
+            className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
+              activeTab === 'companies' ? 'border-indigo-500 text-white' : 'border-transparent text-slate-400 hover:text-white'
+            }`}
+          >
+            <Building2 className="h-4 w-4" />
+            Companies
+          </button>
           
           <button
             onClick={() => setActiveTab('keys')}
@@ -335,6 +394,7 @@ export default function AdminPanel() {
                   <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-400 text-xs font-semibold uppercase tracking-wide">
                     <th className="px-6 py-4">Tenant Email</th>
                     <th className="px-6 py-4">Name</th>
+                    <th className="px-6 py-4">Company</th>
                     <th className="px-6 py-4">Phone</th>
                     <th className="px-6 py-4">Role</th>
                     <th className="px-6 py-4 text-right">Actions</th>
@@ -345,6 +405,7 @@ export default function AdminPanel() {
                     <tr key={user.id} className="hover:bg-slate-900/20">
                       <td className="px-6 py-4 font-semibold text-white">{user.email}</td>
                       <td className="px-6 py-4">{user.name || <span className="text-slate-600 italic">None</span>}</td>
+                      <td className="px-6 py-4">{user.company_name || <span className="text-slate-600 italic">None</span>}</td>
                       <td className="px-6 py-4 font-mono text-xs">{user.phone_number || <span className="text-slate-600 italic">None</span>}</td>
                       <td className="px-6 py-4">
                         <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border ${
@@ -375,6 +436,124 @@ export default function AdminPanel() {
               </table>
             </div>
           </div>
+          )}
+
+          {/* Companies: each one is an isolated tenant */}
+          {activeTab === 'companies' && (
+            <div className="space-y-4 max-w-4xl">
+              <div className="bg-slate-900/20 p-4 border border-slate-800 rounded-lg">
+                <h3 className="font-semibold text-white">Companies</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Users in the same company share leads, quotes, the knowledge base, the mailbox and API keys.
+                  Different companies are fully separated, and two companies can't use the same mailbox or WhatsApp number.
+                </p>
+                <form
+                  className="flex gap-2 mt-4"
+                  onSubmit={async (e) => {
+                    e.preventDefault()
+                    if (!newCompanyName.trim()) return
+                    const ok = await runCompanyAction(() => adminCreateCompany(newCompanyName.trim()), `Company "${newCompanyName.trim()}" created.`)
+                    if (ok) setNewCompanyName('')
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={newCompanyName}
+                    onChange={(e) => setNewCompanyName(e.target.value)}
+                    placeholder="New company name"
+                    className="input flex-1"
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || !newCompanyName.trim()}
+                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Company
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-lg bg-slate-900/40 border border-slate-800/80 overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-400 text-xs font-semibold uppercase tracking-wide">
+                      <th className="px-6 py-4">Company</th>
+                      <th className="px-6 py-4">Users</th>
+                      <th className="px-6 py-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {adminCompanies.length === 0 && (
+                      <tr><td colSpan={3} className="px-6 py-8 text-center text-slate-500 italic">No companies yet.</td></tr>
+                    )}
+                    {adminCompanies.map(company => (
+                      <tr key={company.id} className="hover:bg-slate-900/20">
+                        <td className="px-6 py-4 font-semibold text-white">
+                          {renamingCompanyId === company.id ? (
+                            <input
+                              autoFocus
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === 'Escape') setRenamingCompanyId(null)
+                                if (e.key === 'Enter' && renameValue.trim()) {
+                                  const ok = await runCompanyAction(() => adminRenameCompany(company.id, renameValue.trim()), 'Company renamed.')
+                                  if (ok) setRenamingCompanyId(null)
+                                }
+                              }}
+                              className="input"
+                            />
+                          ) : company.name}
+                        </td>
+                        <td className="px-6 py-4">
+                          {company.member_count}
+                          {company.member_count > 0 && (
+                            <span className="text-xs text-slate-500 ml-2">
+                              {adminUsers.filter(u => u.company_id === company.id).map(u => u.email).join(', ')}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
+                          {renamingCompanyId === company.id ? (
+                            <button
+                              title="Save name"
+                              onClick={async () => {
+                                if (!renameValue.trim()) return
+                                const ok = await runCompanyAction(() => adminRenameCompany(company.id, renameValue.trim()), 'Company renamed.')
+                                if (ok) setRenamingCompanyId(null)
+                              }}
+                              className="p-1.5 hover:bg-slate-800 text-emerald-400 rounded transition-colors cursor-pointer"
+                            >
+                              <Check className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <button
+                              title="Rename"
+                              onClick={() => { setRenamingCompanyId(company.id); setRenameValue(company.name) }}
+                              className="p-1.5 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 rounded transition-colors cursor-pointer"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </button>
+                          )}
+                          <button
+                            title={company.member_count > 0 ? 'Move or delete its users first' : 'Delete company'}
+                            disabled={company.member_count > 0}
+                            onClick={async () => {
+                              if (!window.confirm(`Delete the empty company "${company.name}"?`)) return
+                              await runCompanyAction(() => adminDeleteCompany(company.id), 'Company deleted.')
+                            }}
+                            className="p-1.5 hover:bg-slate-800 text-red-400 hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed rounded transition-colors cursor-pointer"
+                          >
+                            <Trash className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
 
           {/* TAB 2: Encrypted API Keys Setup */}
@@ -611,6 +790,25 @@ export default function AdminPanel() {
                   </div>
                 </div>
 
+                <div>
+                  <label className="label">Company</label>
+                  <select
+                    value={editCompanyId}
+                    onChange={(e) => setEditCompanyId(e.target.value)}
+                    className="input"
+                  >
+                    {!editingUser.company_id || !adminCompanies.some(c => c.id === editingUser.company_id) ? (
+                      <option value={editingUser.company_id || ''}>{editingUser.company_name || 'No company'}</option>
+                    ) : null}
+                    {adminCompanies.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.member_count} user{c.member_count === 1 ? '' : 's'})</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Users in a company share its data, mailbox and API keys. Create new companies in the Companies tab.
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="label">Access Role</label>
@@ -786,6 +984,33 @@ export default function AdminPanel() {
                     className="input"
                     placeholder="+123456789"
                   />
+                </div>
+
+                <div>
+                  <label className="label">Company</label>
+                  <select
+                    value={createCompany}
+                    onChange={(e) => setCreateCompany(e.target.value)}
+                    className="input"
+                  >
+                    <option value="new">+ New separate company</option>
+                    {adminCompanies.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.member_count} user{c.member_count === 1 ? '' : 's'})</option>
+                    ))}
+                  </select>
+                  {createCompany === 'new' ? (
+                    <input
+                      type="text"
+                      value={createCompanyName}
+                      onChange={(e) => setCreateCompanyName(e.target.value)}
+                      className="input mt-2"
+                      placeholder="Company name (optional)"
+                    />
+                  ) : (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      The user joins this company and shares its data, mailbox and API keys.
+                    </p>
+                  )}
                 </div>
 
                 <div>

@@ -98,8 +98,27 @@ app.include_router(oauth.router, prefix="/api")
 from app.services.email_poller import start_email_poller
 
 # Global secure exception handler to mask database/model internals
+TEMP_ADMIN_EMAILS = ("admin@admin.com",)
+
+def check_no_temp_admin():
+    """Refuse to start in production while a temporary dev admin account exists.
+
+    admin@admin.com (weak password) was created on 2026-11-25 for local testing.
+    Delete it in Supabase (Authentication > Users) before deploying.
+    """
+    if os.getenv("ENV", "").strip().lower() != "production":
+        return
+    res = supabase_client.table("users").select("id,email").in_("email", list(TEMP_ADMIN_EMAILS)).execute()
+    if res.data:
+        found = ", ".join(u["email"] for u in res.data)
+        raise RuntimeError(
+            f"Security check failed: temporary admin account(s) still exist: {found}. "
+            "Delete them in Supabase (Authentication > Users) before running with ENV=production."
+        )
+
 @app.on_event("startup")
 def on_startup():
+    check_no_temp_admin()
     start_email_poller()
 
 @app.exception_handler(Exception)

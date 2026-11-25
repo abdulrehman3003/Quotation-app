@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 from app.core.config import settings
 from app.core.security import get_current_user, _load_profile_fields
 from app.services import mail_oauth
+from app.core import tenancy
 
 router = APIRouter(prefix="/oauth", tags=["Mailbox sign-in"])
 logger = logging.getLogger(__name__)
@@ -38,9 +39,10 @@ def oauth_status(request: Request, current_user: dict = Depends(get_current_user
 
 
 @router.get("/{provider}/start")
-def oauth_start(provider: str, request: Request, current_user: dict = Depends(get_current_user)):
+def oauth_start(provider: str, request: Request, return_to: str = "profile", current_user: dict = Depends(get_current_user)):
+    """return_to: "profile" (default) or "onboarding", the page the browser comes back to."""
     _check_provider(provider)
-    return {"url": mail_oauth.build_authorize_url(provider, current_user["id"], str(request.base_url))}
+    return {"url": mail_oauth.build_authorize_url(provider, current_user["id"], str(request.base_url), return_to)}
 
 
 @router.get("/{provider}/callback")
@@ -50,10 +52,11 @@ def oauth_callback(provider: str, request: Request, code: str | None = None, sta
     the signed `state` proves which signed-in user started the flow.
     """
     frontend = (settings.FRONTEND_URL or "").rstrip("/")
+    page = mail_oauth.state_return_page(state)
 
     def finish(result: str):
         if frontend:
-            return RedirectResponse(f"{frontend}/profile?mail={result}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(f"{frontend}/{page}?mail={result}", status_code=status.HTTP_303_SEE_OTHER)
         return {"status": result}
 
     if provider not in mail_oauth.PROVIDERS or not mail_oauth.provider_configured(provider):
@@ -64,6 +67,10 @@ def oauth_callback(provider: str, request: Request, code: str | None = None, sta
         user_id = mail_oauth.read_state(state, provider)
         tokens = mail_oauth.exchange_code(provider, code, str(request.base_url))
         company_id = _load_profile_fields(user_id)["company_id"]
+        clash = tenancy.find_credential_clash(user_id, company_id, gmail_email=tokens["email"])
+        if clash:
+            logger.warning(f"Mailbox sign-in refused for user {user_id}: {clash}")
+            return finish("in_use")
         mail_oauth.store_connection(user_id, company_id, provider, tokens["email"], tokens["refresh_token"])
     except mail_oauth.MailOAuthError as e:
         logger.warning(f"Mailbox sign-in failed: {str(e)}")

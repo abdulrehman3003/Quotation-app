@@ -82,10 +82,16 @@ def redirect_uri(provider: str, request_base_url: str) -> str:
 
 
 # ------------------------------------------------------------------ state
-def make_state(user_id: str, provider: str) -> str:
+# Frontend pages the callback may send the browser back to (never a free-form URL).
+RETURN_PAGES = ("profile", "onboarding")
+
+
+def make_state(user_id: str, provider: str, return_to: str = "profile") -> str:
     """Signed, short-lived: ties the callback to the user who started the flow (CSRF protection)."""
     return jwt.encode(
-        {"sub": user_id, "provider": provider, "purpose": "mail_oauth", "exp": datetime.now(timezone.utc) + timedelta(minutes=10)},
+        {"sub": user_id, "provider": provider, "purpose": "mail_oauth",
+         "return_to": return_to if return_to in RETURN_PAGES else "profile",
+         "exp": datetime.now(timezone.utc) + timedelta(minutes=10)},
         settings.SUPABASE_JWT_SECRET,
         algorithm="HS256",
     )
@@ -101,7 +107,16 @@ def read_state(state: str, provider: str) -> str:
     return payload["sub"]
 
 
-def build_authorize_url(provider: str, user_id: str, request_base_url: str) -> str:
+def state_return_page(state: str | None) -> str:
+    """The page the flow started from, or "profile" when the state is missing or invalid."""
+    try:
+        page = jwt.decode(state or "", settings.SUPABASE_JWT_SECRET, algorithms=["HS256"]).get("return_to")
+    except JWTError:
+        return "profile"
+    return page if page in RETURN_PAGES else "profile"
+
+
+def build_authorize_url(provider: str, user_id: str, request_base_url: str, return_to: str = "profile") -> str:
     cfg = PROVIDERS[provider]
     client_id, _ = client_credentials(provider)
     params = {
@@ -109,7 +124,7 @@ def build_authorize_url(provider: str, user_id: str, request_base_url: str) -> s
         "redirect_uri": redirect_uri(provider, request_base_url),
         "response_type": "code",
         "scope": cfg["scope"],
-        "state": make_state(user_id, provider),
+        "state": make_state(user_id, provider, return_to),
         **cfg["extra_authorize_params"],
     }
     return f"{cfg['authorize_url']}?{urlencode(params)}"

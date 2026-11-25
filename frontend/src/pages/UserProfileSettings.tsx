@@ -39,6 +39,7 @@ export default function UserProfileSettings() {
     const result = new URLSearchParams(window.location.search).get('mail')
     if (result === 'connected') setMailMessage({ type: 'success', text: 'Mailbox connected.' })
     else if (result === 'cancelled') setMailMessage({ type: 'error', text: 'Sign-in was cancelled. No mailbox was connected.' })
+    else if (result === 'in_use') setMailMessage({ type: 'error', text: 'That mailbox is already used by another company. Each company needs its own mailbox.' })
     else if (result === 'error') setMailMessage({ type: 'error', text: 'The mailbox could not be connected. Please try again.' })
     if (result) window.history.replaceState({}, '', window.location.pathname)
   }, [fetchMailConnection])

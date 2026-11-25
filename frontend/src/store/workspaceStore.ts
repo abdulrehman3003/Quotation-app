@@ -3,6 +3,13 @@ import { supabase } from '../lib/supabase'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000'
 
+export interface AdminCompany {
+  id: string
+  name: string
+  created_at?: string
+  member_count: number
+}
+
 export interface Lead {
   id: string
   user_id: string
@@ -273,7 +280,7 @@ interface WorkspaceState {
   uploadPartFile: (leadId: string, file: File) => Promise<void>
   mailConnection: MailConnectionStatus | null
   fetchMailConnection: () => Promise<void>
-  startMailConnect: (provider: string) => Promise<void>
+  startMailConnect: (provider: string, returnTo?: 'profile' | 'onboarding') => Promise<void>
   disconnectMail: () => Promise<void>
   fetchAutomation: () => Promise<void>
   saveAutomation: (changes: Partial<AutomationSettings>) => Promise<void>
@@ -281,6 +288,11 @@ interface WorkspaceState {
   adminCreateUser: (data: any) => Promise<void>
   adminUpdateUser: (userId: string, data: any) => Promise<void>
   adminDeleteUser: (userId: string) => Promise<void>
+  adminCompanies: AdminCompany[]
+  adminListCompanies: () => Promise<AdminCompany[]>
+  adminCreateCompany: (name: string) => Promise<AdminCompany>
+  adminRenameCompany: (companyId: string, name: string) => Promise<void>
+  adminDeleteCompany: (companyId: string) => Promise<void>
   adminSettings: { base_labor_rate: number; base_material_markup: number } | null
   fetchAdminSettings: () => Promise<any>
   saveAdminSettings: (data: { base_labor_rate: number; base_material_markup: number }) => Promise<any>
@@ -335,6 +347,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     userProfile: null,
     teamInfo: null,
     adminUsers: [],
+    adminCompanies: [],
     adminSettings: null,
     systemStatus: null,
     systemLogs: [],
@@ -1024,9 +1037,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
     },
 
-    startMailConnect: async (provider: string) => {
+    startMailConnect: async (provider: string, returnTo: 'profile' | 'onboarding' = 'profile') => {
       const headers = await getAuthHeaders()
-      const res = await fetch(`${BACKEND_URL}/api/oauth/${provider}/start`, { headers })
+      const res = await fetch(`${BACKEND_URL}/api/oauth/${provider}/start?return_to=${returnTo}`, { headers })
       if (!res.ok) throw await toApiError(res, "Could not start the sign-in")
       const { url } = await res.json()
       window.location.assign(url)
@@ -1141,7 +1154,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           const errData = await res.json()
           throw new Error(errData.detail || "Failed to create user via admin panel")
         }
-        await get().adminListUsers()
+        await Promise.all([get().adminListUsers(), get().adminListCompanies()])
       } catch (err: any) {
         set({ error: err.message })
         throw err
@@ -1157,8 +1170,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           headers,
           body: JSON.stringify(data)
         })
-        if (!res.ok) throw new Error("Failed to update user profile via admin panel")
-        await get().adminListUsers()
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to update user profile via admin panel")
+        }
+        await Promise.all([get().adminListUsers(), get().adminListCompanies()])
       } catch (err: any) {
         set({ error: err.message })
         throw err
@@ -1174,11 +1190,53 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           headers
         })
         if (!res.ok) throw new Error("Failed to delete user via admin panel")
-        await get().adminListUsers()
+        await Promise.all([get().adminListUsers(), get().adminListCompanies()])
       } catch (err: any) {
         set({ error: err.message })
         throw err
       }
+    },
+
+    adminListCompanies: async () => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/companies`, { headers })
+      if (!res.ok) throw new Error("Failed to load companies")
+      const data: AdminCompany[] = await res.json()
+      set({ adminCompanies: data })
+      return data
+    },
+
+    adminCreateCompany: async (name: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/companies`, {
+        method: 'POST', headers, body: JSON.stringify({ name })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || "Failed to create company")
+      await get().adminListCompanies()
+      return data as AdminCompany
+    },
+
+    adminRenameCompany: async (companyId: string, name: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/companies/${companyId}`, {
+        method: 'PUT', headers, body: JSON.stringify({ name })
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || "Failed to rename company")
+      }
+      await Promise.all([get().adminListCompanies(), get().adminListUsers()])
+    },
+
+    adminDeleteCompany: async (companyId: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/companies/${companyId}`, { method: 'DELETE', headers })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || "Failed to delete company")
+      }
+      await get().adminListCompanies()
     },
 
     fetchSystemStatus: async () => {

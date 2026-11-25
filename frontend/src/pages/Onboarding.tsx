@@ -21,6 +21,26 @@ import {
   FileSpreadsheet
 } from 'lucide-react'
 
+// Form fields kept across the Google / Microsoft sign-in redirect (secrets are never stored).
+const DRAFT_KEY = 'axr_onboarding_draft'
+type OnboardingDraft = Record<string, string>
+
+const readDraft = (): OnboardingDraft | null => {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+const MAIL_RESULT_MESSAGES: Record<string, { type: 'success' | 'error'; text: string }> = {
+  connected: { type: 'success', text: 'Mailbox connected.' },
+  cancelled: { type: 'error', text: 'Sign-in was cancelled. No mailbox was connected.' },
+  in_use: { type: 'error', text: 'That mailbox is already used by another company. Each company needs its own mailbox.' },
+  error: { type: 'error', text: 'The mailbox could not be connected. Please try again.' }
+}
+
 const STEPS = [
   { id: 1, title: 'Company & Profile', subtitle: 'Workspace identity', icon: Building2 },
   { id: 2, title: 'Quotation Defaults', subtitle: 'Rates & margins', icon: Calculator },
@@ -38,7 +58,11 @@ export const Onboarding: React.FC = () => {
     fetchKbFiles,
     completeOnboarding,
     uploadKbFile,
-    seedSampleKb
+    seedSampleKb,
+    mailConnection,
+    fetchMailConnection,
+    startMailConnect,
+    disconnectMail
   } = useWorkspaceStore()
 
   const [step, setStep] = useState(1)
@@ -66,6 +90,8 @@ export const Onboarding: React.FC = () => {
   const [twilioSid, setTwilioSid] = useState('')
   const [twilioToken, setTwilioToken] = useState('')
   const [twilioPhone, setTwilioPhone] = useState('')
+  const [mailMessage, setMailMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [mailBusy, setMailBusy] = useState(false)
 
   useEffect(() => {
     fetchProfile()
@@ -88,10 +114,65 @@ export const Onboarding: React.FC = () => {
           if (profile.gmail_email) setGmailEmail(profile.gmail_email)
           if (profile.twilio_phone) setTwilioPhone(profile.twilio_phone)
         }
+        // Coming back from mailbox sign-in: restore what was typed before leaving.
+        const draft = readDraft()
+        if (draft) {
+          const setters: Record<string, (v: string) => void> = {
+            name: setName, companyName: setCompanyName, phoneNumber: setPhoneNumber, industry: setIndustry,
+            currency: setCurrency, baseLaborRate: setBaseLaborRate, baseMaterialMarkup: setBaseMaterialMarkup,
+            paymentTerms: setPaymentTerms, twilioSid: setTwilioSid, twilioPhone: setTwilioPhone
+          }
+          Object.entries(draft).forEach(([k, v]) => setters[k]?.(v))
+          try { sessionStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
+        }
       })
       .catch(() => {})
     fetchKbFiles().catch(() => {})
-  }, [fetchProfile, fetchKbFiles, user])
+    fetchMailConnection()
+  }, [fetchProfile, fetchKbFiles, fetchMailConnection, user])
+
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get('mail')
+    if (!result) return
+    setStep(3)
+    setMailMessage(MAIL_RESULT_MESSAGES[result] || MAIL_RESULT_MESSAGES.error)
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [])
+
+  const handleMailConnect = async (provider: string) => {
+    setMailMessage(null)
+    setMailBusy(true)
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+        name, companyName, phoneNumber, industry, currency, baseLaborRate,
+        baseMaterialMarkup, paymentTerms, twilioSid, twilioPhone
+      }))
+    } catch { /* the wizard still works; typed fields would need re-entering */ }
+    try {
+      await startMailConnect(provider, 'onboarding')
+    } catch (err: any) {
+      try { sessionStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
+      setMailMessage({ type: 'error', text: err.message || 'Could not start the sign-in.' })
+      setMailBusy(false)
+    }
+  }
+
+  const handleMailDisconnect = async () => {
+    setMailMessage(null)
+    setMailBusy(true)
+    try {
+      await disconnectMail()
+      setMailMessage({ type: 'success', text: 'Mailbox disconnected.' })
+    } catch (err: any) {
+      setMailMessage({ type: 'error', text: err.message || 'Could not disconnect the mailbox.' })
+    } finally {
+      setMailBusy(false)
+    }
+  }
+
+  const ssoProviders = ['google', 'microsoft'] as const
+  const ssoConfigured = (p: string) => !!mailConnection?.providers?.[p]?.configured
+  const anySsoConfigured = ssoProviders.some(ssoConfigured)
 
   const validateCurrentStep = (): boolean => {
     setErrorMsg(null)
@@ -431,33 +512,101 @@ export const Onboarding: React.FC = () => {
                 />
               </div>
 
-              {/* Gmail IMAP / SMTP */}
+              {/* Email: Google / Microsoft sign-in, or Gmail app password */}
               <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/80 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold uppercase tracking-wide text-brand-400 flex items-center gap-1.5">
                     <Mail className="w-3.5 h-3.5" />
-                    Gmail Inbound Poller & SMTP Dispatch
+                    Email Inbox & Quote Sending
                   </span>
-                  {userProfile?.has_gmail_password && (
+                  {(mailConnection?.connection || userProfile?.has_gmail_password) && (
                     <span className="text-[11px] text-emerald-400 font-semibold">Already Configured</span>
                   )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <input
-                    type="email"
-                    value={gmailEmail}
-                    onChange={(e) => setGmailEmail(e.target.value)}
-                    placeholder="sales@yourcompany.com"
-                    className="w-full bg-slate-900 border border-slate-800 focus:border-brand-500 rounded-lg px-3.5 py-2 text-xs text-slate-100 outline-none"
-                  />
-                  <input
-                    type="password"
-                    value={gmailPassword}
-                    onChange={(e) => setGmailPassword(e.target.value)}
-                    placeholder={userProfile?.has_gmail_password ? '•••••••••••• (App Password saved)' : '16-character Google App Password'}
-                    className="w-full bg-slate-900 border border-slate-800 focus:border-brand-500 rounded-lg px-3.5 py-2 text-xs text-slate-100 outline-none font-mono"
-                  />
-                </div>
+
+                {mailMessage && (
+                  <div
+                    role="status"
+                    className={`p-2.5 rounded-lg text-xs border ${
+                      mailMessage.type === 'success'
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                        : 'bg-red-500/10 border-red-500/20 text-red-300'
+                    }`}
+                  >
+                    {mailMessage.text}
+                  </div>
+                )}
+
+                {mailConnection?.connection ? (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <p className="text-xs text-slate-300 flex items-center gap-1.5">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>
+                        <span className="capitalize">{mailConnection.connection.provider}</span> mailbox{' '}
+                        <span className="font-semibold text-white">{mailConnection.connection.email}</span> is connected.
+                      </span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleMailDisconnect}
+                      disabled={mailBusy}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-50 cursor-pointer self-start"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {mailConnection && (
+                      <>
+                        <p className="text-xs text-slate-400">
+                          Sign in to read enquiries from your inbox and send quotes from it. No app password needed.
+                        </p>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          {ssoProviders.map((provider) => (
+                            <button
+                              key={provider}
+                              type="button"
+                              onClick={() => handleMailConnect(provider)}
+                              disabled={mailBusy || !ssoConfigured(provider)}
+                              title={ssoConfigured(provider) ? undefined : 'Not set up on this server yet'}
+                              className="flex-1 px-3.5 py-2 rounded-lg text-xs font-semibold bg-white hover:bg-slate-100 text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                            >
+                              {mailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+                              {provider === 'google' ? 'Sign in with Google' : 'Sign in with Microsoft'}
+                            </button>
+                          ))}
+                        </div>
+                        {!anySsoConfigured && (
+                          <p className="text-[11px] text-amber-300/80">
+                            Google / Microsoft sign-in isn't set up on this server yet. Use a Gmail app password below for now.
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                          <span className="h-px flex-1 bg-slate-800" />
+                          or use a Gmail app password
+                          <span className="h-px flex-1 bg-slate-800" />
+                        </div>
+                      </>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        type="email"
+                        value={gmailEmail}
+                        onChange={(e) => setGmailEmail(e.target.value)}
+                        placeholder="sales@yourcompany.com"
+                        className="w-full bg-slate-900 border border-slate-800 focus:border-brand-500 rounded-lg px-3.5 py-2 text-xs text-slate-100 outline-none"
+                      />
+                      <input
+                        type="password"
+                        value={gmailPassword}
+                        onChange={(e) => setGmailPassword(e.target.value)}
+                        placeholder={userProfile?.has_gmail_password ? '•••••••••••• (App Password saved)' : '16-character Google App Password'}
+                        className="w-full bg-slate-900 border border-slate-800 focus:border-brand-500 rounded-lg px-3.5 py-2 text-xs text-slate-100 outline-none font-mono"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Twilio WhatsApp */}

@@ -182,3 +182,10 @@ Done:
 - WhatsApp CSV export links use `FRONTEND_URL`. The customer-name regex now handles "Thank you,\nName". The kb logger shadowing bug is fixed.
 
 Still open: rotate secrets leaked in git history; per-process rate limiter; LLM totals not re-validated; DB log handler does a sync insert per log line; CSP hardcoded; no tests or CI.
+
+## 12. Pre-production security checklist (do before final deployment)
+
+- [ ] **Delete the temporary dev admin `admin@admin.com`** (created 2026-11-25 for local testing; weak password). Supabase → Authentication → Users → delete it; the `public.users` row goes with it. Create the real admin with a strong password and set its `role = 'admin'`.
+  - Enforced: with `ENV=production`, `check_no_temp_admin()` in `backend/app/main.py` makes the backend **refuse to start** while that account exists.
+- [ ] Set `ENV=production` in the deployment environment (otherwise the check above is skipped).
+- [ ] Rotate secrets leaked in git history (§8 #3).

@@ -2,8 +2,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from typing import List, Optional, Literal
 from pydantic import BaseModel
-from app.core.security import get_current_user, require_admin, _provision_isolated_company
+from app.core.security import get_current_user, require_admin, _provision_isolated_company, DEFAULT_COMPANY_ID
 from app.core.encryption import encrypt_key
+from app.core import tenancy
 from supabase import create_client, Client
 from app.core.config import settings
 import logging
@@ -25,6 +26,8 @@ class UserUpdateInput(BaseModel):
     twilio_token: Optional[str] = None
     twilio_phone: Optional[str] = None
     default_quote_parameters: Optional[dict] = None
+    # Move the user into this existing company.
+    company_id: Optional[str] = None
 
 class UserCreateInput(BaseModel):
     email: str
@@ -32,6 +35,70 @@ class UserCreateInput(BaseModel):
     name: Optional[str] = None
     phone_number: Optional[str] = None
     role: Literal["user", "admin"] = "user"
+    # Put the user in an existing company; when omitted a new company is created,
+    # named new_company_name (or "<name>'s Workspace").
+    company_id: Optional[str] = None
+    new_company_name: Optional[str] = None
+
+class CompanyInput(BaseModel):
+    name: str
+
+def _clean_company_name(name: str) -> str:
+    clean = (name or "").strip()
+    if not clean:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Company name is required.")
+    if len(clean) > 120:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Company name is too long.")
+    return clean
+
+@router.get("/companies")
+def list_companies(admin: dict = Depends(require_admin)):
+    """All companies (except the internal default) with their member counts."""
+    try:
+        companies = supabase.table("companies").select("*").order("created_at").execute().data or []
+        users = supabase.table("users").select("id,company_id").execute().data or []
+        counts: dict = {}
+        for u in users:
+            counts[u.get("company_id")] = counts.get(u.get("company_id"), 0) + 1
+        return [
+            {"id": c["id"], "name": c.get("name"), "created_at": c.get("created_at"), "member_count": counts.get(c["id"], 0)}
+            for c in companies if c["id"] != DEFAULT_COMPANY_ID
+        ]
+    except Exception as e:
+        logger.error(f"Failed to list companies: {str(e)}")
+        raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")
+
+@router.post("/companies", status_code=status.HTTP_201_CREATED)
+def create_company(data: CompanyInput, admin: dict = Depends(require_admin)):
+    name = _clean_company_name(data.name)
+    if tenancy.company_name_taken(name):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f'A company named "{name}" already exists.')
+    res = supabase.table("companies").insert({"name": name}).execute()
+    logger.info(f"Admin created company {name}")
+    return res.data[0]
+
+@router.put("/companies/{company_id}")
+def rename_company(company_id: str, data: CompanyInput, admin: dict = Depends(require_admin)):
+    tenancy.require_company(company_id)
+    name = _clean_company_name(data.name)
+    if tenancy.company_name_taken(name, exclude_id=company_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f'A company named "{name}" already exists.')
+    supabase.table("companies").update({"name": name}).eq("id", company_id).execute()
+    return {"status": "success", "id": company_id, "name": name}
+
+@router.delete("/companies/{company_id}")
+def delete_company(company_id: str, admin: dict = Depends(require_admin)):
+    """Deletes an empty company. Companies with members are refused: deleting cascades to their data."""
+    tenancy.require_company(company_id)
+    members = supabase.table("users").select("id").eq("company_id", company_id).execute().data or []
+    if members:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This company still has {len(members)} user(s). Move or delete them first."
+        )
+    supabase.table("companies").delete().eq("id", company_id).execute()
+    logger.info(f"Admin deleted empty company {company_id}")
+    return {"status": "success"}
 
 @router.get("/users")
 def list_users(admin: dict = Depends(require_admin)):
@@ -52,6 +119,7 @@ def list_users(admin: dict = Depends(require_admin)):
         # Fetch public profiles
         res = supabase.table("users").select("*").execute()
         profiles_by_id = {p["id"]: p for p in res.data} if res.data else {}
+        company_names = {c["id"]: c.get("name") for c in (supabase.table("companies").select("id,name").execute().data or [])}
         
         users_list = []
         for auth_user in auth_users:
@@ -79,6 +147,8 @@ def list_users(admin: dict = Depends(require_admin)):
                 "name": profile.get("name"),
                 "phone_number": profile.get("phone_number"),
                 "role": profile.get("role", "user"),
+                "company_id": profile.get("company_id"),
+                "company_name": company_names.get(profile.get("company_id")) if profile.get("company_id") != DEFAULT_COMPANY_ID else None,
                 "created_at": auth_user.created_at,
                 "last_sign_in_at": auth_user.last_sign_in_at,
                 "has_gemini_key": bool(profile.get("encrypted_gemini_key")),
@@ -125,6 +195,16 @@ def create_new_user(
     except Exception:
         pass
 
+    target_company_id = (data.company_id or "").strip() or None
+    new_company_name = (data.new_company_name or "").strip() or None
+    if target_company_id:
+        tenancy.require_company(target_company_id)
+    elif new_company_name and tenancy.company_name_taken(new_company_name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'A company named "{new_company_name}" already exists. Pick it from the list instead.'
+        )
+
     try:
         # Create user in auth via admin API (supports gotrue/AdminUserAttributes and dictionary formats)
         auth_res = None
@@ -155,7 +235,14 @@ def create_new_user(
             raise HTTPException(status_code=500, detail="Failed to create user in auth database")
             
         user_id = auth_res.user.id
-        comp_id = _provision_isolated_company(user_id, email=clean_email, preferred_name=f"{data.name}'s Workspace" if data.name else None)
+        if target_company_id:
+            comp_id = target_company_id
+        else:
+            comp_id = _provision_isolated_company(
+                user_id, email=clean_email,
+                preferred_name=new_company_name or (f"{data.name}'s Workspace" if data.name else None)
+            )
+        company_name = (tenancy.get_company(comp_id) or {}).get("name")
         
         # Upsert public profile
         supabase.table("users").upsert({
@@ -164,11 +251,12 @@ def create_new_user(
             "name": data.name,
             "phone_number": data.phone_number,
             "role": data.role,
-            "company_id": comp_id
+            "company_id": comp_id,
+            "default_quote_parameters": {"company_name": company_name} if company_name else {}
         }, on_conflict="id").execute()
         
         logger.info(f"Admin created new user: {clean_email}")
-        return {"status": "success", "user_id": user_id}
+        return {"status": "success", "user_id": user_id, "company_id": comp_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -191,6 +279,16 @@ def update_user_profile(
     Allows admin to modify user details, encrypt credentials, and reset passwords.
     """
     try:
+        current = supabase.table("users").select("company_id").eq("id", user_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        target_company_id = (data.company_id or "").strip() or current.data[0].get("company_id") or DEFAULT_COMPANY_ID
+
+        # Refuse before writing anything if the mailbox / number belongs to another company.
+        tenancy.assert_no_credential_clash(user_id, target_company_id, data.gmail_email, data.twilio_phone)
+        if target_company_id != current.data[0].get("company_id"):
+            tenancy.move_user_to_company(user_id, target_company_id)
+
         # 1. Update Auth settings (password) if provided
         if data.password:
             supabase.auth.admin.update_user_by_id(
@@ -229,6 +327,8 @@ def update_user_profile(
             logger.info(f"Admin updated public profile columns for user {user_id}")
 
         return {"status": "success", "message": f"User profile {user_id} updated successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to update user profile: {str(e)}")
         raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")

@@ -66,7 +66,11 @@ export const Auth: React.FC = () => {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get('session') === 'expired'
+      ? 'Your session is no longer valid. Please sign in again.'
+      : null
+  )
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   const navigate = useNavigate()

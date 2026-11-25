@@ -11,6 +11,7 @@ from app.core.security import get_current_user
 from app.api import customers as customers_api, leads as leads_api, oauth as oauth_api
 from app.api.customers import build_customer_directory, build_customer_history
 from app.services import mail_oauth
+from app.core import tenancy
 from app.services.geometry import analyze_part_file, analyze_stl, describe_geometry, GeometryError
 from app.services.parser import attachments_to_text
 from tests.fake_supabase import FakeSupabase
@@ -124,7 +125,7 @@ def test_history_tracks_prices_the_customer_saw():
 @pytest.fixture
 def client(monkeypatch):
     db = FakeSupabase()
-    for module in (customers_api, leads_api, mail_oauth):
+    for module in (customers_api, leads_api, mail_oauth, tenancy):
         monkeypatch.setattr(module, "supabase", db)
     db.tables["quotes"] = [{**q, "company_id": "c1"} for q in QUOTES] + [
         {"id": "x", "company_id": "c2", "customer_email": "secret@other.com", "status": "dispatched", "total_cost": 9, "sent_at": "2026-01-01"}]
