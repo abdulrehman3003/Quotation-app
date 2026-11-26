@@ -19,8 +19,12 @@ import {
   TrendingUp,
   DollarSign,
   Menu,
-  X
+  X,
+  Check
 } from 'lucide-react'
+
+// Where "Talk to us" on the pricing section sends people. Change to your real sales address.
+const SALES_EMAIL = 'sales@axrflows.com'
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate()
@@ -41,7 +45,7 @@ export const LandingPage: React.FC = () => {
       setIsScrolled(window.scrollY > 20)
       
       // Dynamic active indicator on scroll
-      const sections = ['features', 'sandbox', 'how-it-works', 'faq']
+      const sections = ['features', 'sandbox', 'how-it-works', 'pricing', 'faq']
       for (const sectionId of sections) {
         const el = document.getElementById(sectionId)
         if (el) {
@@ -64,10 +68,73 @@ export const LandingPage: React.FC = () => {
   const extraDealsWon = Math.round((leadsCount * 0.15) * 0.18) // assuming 15% close rate baseline, 18% improvement
   const estimatedValueCreated = extraDealsWon * dealValue + (hoursSavedPerMonth * 45) // value of hours + deals
 
+  // Pricing state
+  const [billingYearly, setBillingYearly] = useState(false)
+
+  const plans = [
+    {
+      name: 'Starter',
+      blurb: 'For a small team quoting from email.',
+      monthly: 59,
+      yearly: 49,
+      setup: 249 as number | null,
+      cta: 'Start with Starter',
+      highlight: false,
+      features: [
+        'Up to 2 users',
+        'One email inbox connected',
+        'Up to 150 AI-drafted quotes a month',
+        'Price lists from Excel, CSV or PDF',
+        'Online quote page with accept / decline',
+        'Win-rate and quote reports',
+        'Email support',
+      ],
+    },
+    {
+      name: 'Growth',
+      blurb: 'For businesses whose customers ask on WhatsApp.',
+      monthly: 99,
+      yearly: 82,
+      setup: 499 as number | null,
+      cta: 'Start with Growth',
+      highlight: true,
+      features: [
+        'Up to 5 users',
+        'Email inbox and a WhatsApp Business number, set up for you',
+        'Up to 500 AI-drafted quotes a month',
+        'Automatic drafts from incoming enquiries',
+        'Automatic follow-up on unanswered quotes',
+        'Customer directory with price history',
+        'Priority support on WhatsApp',
+      ],
+    },
+    {
+      name: 'Scale',
+      blurb: 'For several branches or a high quote volume.',
+      monthly: 249,
+      yearly: 207,
+      setup: null as number | null,
+      cta: 'Talk to us',
+      highlight: false,
+      features: [
+        'Several branches or companies',
+        'Unlimited users',
+        'Higher quote volume to match your business',
+        'Custom pricing rules and part-file costing',
+        'Webhooks into your own systems',
+        'Named onboarding contact',
+      ],
+    },
+  ]
+
   // FAQ state
   const [activeFaq, setActiveFaq] = useState<number | null>(null)
 
   const faqs = [
+    {
+      q: 'How do I pay, and what does the setup fee cover?',
+      a: 'You receive an invoice in US dollars and can pay by card or bank transfer. The one-time setup fee covers loading your price lists, connecting your inbox and WhatsApp number, and running test quotes with you until the prices are right. Monthly plans can be cancelled at any time.'
+    },
     {
       q: 'How does AXRFLOWS ingest pricing and lead data?',
       a: 'AXRFLOWS features direct integration with email inboxes, WhatsApp APIs, and uploaded Knowledge Base sheets. Our AI-driven processing pipeline extracts semantic context, products, and customer needs to automatically run calculations.'
@@ -135,6 +202,7 @@ export const LandingPage: React.FC = () => {
                 { id: 'features', label: 'Features' },
                 { id: 'sandbox', label: 'Sandbox Calculator' },
                 { id: 'how-it-works', label: 'How It Works' },
+                { id: 'pricing', label: 'Pricing' },
                 { id: 'faq', label: 'FAQ' }
               ].map((tab) => (
                 <button
@@ -181,7 +249,7 @@ export const LandingPage: React.FC = () => {
 
         {/* Mobile Dropdown Panel with Dynamic Glassmorphism */}
         <div className={`md:hidden absolute left-4 right-4 mt-2 overflow-hidden transition-colors duration-500 rounded-lg border border-slate-900 bg-slate-950/90 ${
-          isMobileMenuOpen ? 'max-h-[350px] opacity-100 p-6' : 'max-h-0 opacity-0 pointer-events-none'
+          isMobileMenuOpen ? 'max-h-[420px] opacity-100 p-6' : 'max-h-0 opacity-0 pointer-events-none'
         }`}>
           <div className="flex flex-col gap-4">
             <button 
@@ -201,6 +269,12 @@ export const LandingPage: React.FC = () => {
               className={`text-left text-sm font-semibold py-2.5 border-b border-slate-900/60 transition-colors ${activeSection === 'how-it-works' ? 'text-brand-400' : 'text-slate-400'}`}
             >
               How It Works
+            </button>
+            <button
+              onClick={() => scrollToSection('pricing')}
+              className={`text-left text-sm font-semibold py-2.5 border-b border-slate-900/60 transition-colors ${activeSection === 'pricing' ? 'text-brand-400' : 'text-slate-400'}`}
+            >
+              Pricing
             </button>
             <button 
               onClick={() => scrollToSection('faq')} 
@@ -617,6 +691,92 @@ export const LandingPage: React.FC = () => {
               </p>
             </div>
           </div>
+        </section>
+
+        {/* Pricing */}
+        <section id="pricing" className="py-24 border-t border-slate-900">
+          <div className="text-center mb-10">
+            <h2 className="text-3xl font-semibold text-white">Simple pricing</h2>
+            <p className="text-slate-400 text-sm mt-3 max-w-lg mx-auto">
+              We set the system up for you, so you are sending quotes within 48 hours. One extra job won a month usually pays for the plan.
+            </p>
+
+            <div className="mt-8 inline-flex items-center p-1 bg-slate-900/40 border border-slate-900 rounded-full">
+              <button
+                onClick={() => setBillingYearly(false)}
+                className={`text-xs font-semibold px-4 py-2 rounded-full cursor-pointer transition-colors ${!billingYearly ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Monthly
+              </button>
+              <button
+                onClick={() => setBillingYearly(true)}
+                className={`text-xs font-semibold px-4 py-2 rounded-full cursor-pointer transition-colors ${billingYearly ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Yearly <span className="text-brand-400">· 2 months free</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="max-w-3xl mx-auto mb-10 rounded-lg border border-brand-500/30 bg-brand-500/5 px-5 py-4 text-center text-sm text-slate-300">
+            <span className="font-semibold text-white">Founding customers:</span> the first three businesses get the setup fee waived in exchange for a short case study.
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+            {plans.map((plan) => (
+              <div
+                key={plan.name}
+                className={`relative flex flex-col rounded-lg border p-7 ${plan.highlight ? 'border-brand-500/60 bg-slate-900/50' : 'border-slate-900 bg-slate-900/10'}`}
+              >
+                {plan.highlight && (
+                  <span className="absolute -top-3 left-7 text-[11px] font-semibold uppercase tracking-wider bg-brand-500 text-white px-3 py-1 rounded-full">
+                    Most popular
+                  </span>
+                )}
+                <h3 className="text-lg font-semibold text-white">{plan.name}</h3>
+                <p className="text-slate-400 text-sm mt-1">{plan.blurb}</p>
+
+                <div className="mt-6 flex items-baseline gap-1">
+                  {plan.setup === null && <span className="text-slate-400 text-sm mr-1">from</span>}
+                  <span className="text-4xl font-semibold text-white">${billingYearly ? plan.yearly : plan.monthly}</span>
+                  <span className="text-slate-400 text-sm">/ month</span>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  {billingYearly ? `Billed yearly at $${plan.yearly * 12}` : 'Billed monthly'}
+                  {' · '}
+                  {plan.setup === null ? 'Setup quoted for your business' : `$${plan.setup} one-time setup`}
+                </p>
+
+                <ul className="mt-6 space-y-3 flex-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex gap-2.5 text-sm text-slate-300">
+                      <Check className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                {plan.setup === null ? (
+                  <a
+                    href={`mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AXRFLOWS Scale plan')}`}
+                    className="mt-8 w-full py-3 text-center text-sm font-semibold rounded-lg border border-slate-800 text-slate-200 hover:border-slate-700 hover:text-white transition-colors"
+                  >
+                    {plan.cta}
+                  </a>
+                ) : (
+                  <button
+                    onClick={handleCta}
+                    className={`mt-8 w-full py-3 text-sm font-semibold rounded-lg transition-colors cursor-pointer ${plan.highlight ? 'bg-brand-500 hover:bg-brand-600 text-white' : 'border border-slate-800 text-slate-200 hover:border-slate-700 hover:text-white'}`}
+                  >
+                    {plan.cta}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <p className="text-center text-xs text-slate-500 mt-8 max-w-2xl mx-auto leading-relaxed">
+            Prices in US dollars, excluding local taxes. WhatsApp conversation fees charged by Meta are passed on at cost. Paid by invoice: card or bank transfer.
+          </p>
         </section>
 
         {/* FAQ Section */}
