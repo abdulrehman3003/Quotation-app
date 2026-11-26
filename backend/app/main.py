@@ -7,7 +7,7 @@ import logging
 import os
 
 from app.core.config import settings
-from app.api import leads, kb, quotes, emails, whatsapp, admin, users, public, automation, customers, oauth
+from app.api import leads, kb, quotes, emails, whatsapp, admin, users, public, automation, customers, oauth, notifications
 from supabase import create_client, Client
 
 supabase_client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
@@ -94,6 +94,7 @@ app.include_router(public.router, prefix="/api")
 app.include_router(automation.router, prefix="/api")
 app.include_router(customers.router, prefix="/api")
 app.include_router(oauth.router, prefix="/api")
+app.include_router(notifications.router, prefix="/api")
 
 from app.services.email_poller import start_email_poller
 
@@ -139,5 +140,7 @@ if __name__ == "__main__":
         "app.main:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=True
+        reload=True,
+        # Only watch the app code: scanning .venv (thousands of files) pins a CPU core.
+        reload_dirs=[os.path.join(os.path.dirname(os.path.abspath(__file__)))],
     )

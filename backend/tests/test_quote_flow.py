@@ -33,7 +33,7 @@ def test_engine_totals_come_from_line_items():
 def test_engine_review_notes_cover_unpriced_mismatch_and_gaps():
     notes = " | ".join(finalize_engine_output(engine_output()).review_notes)
     assert "Powder coating" in notes
-    assert "did not match" in notes
+    assert "did not match" not in notes  # reply figures are rendered from the items, so no mismatch note
     assert "plate thickness" in notes
     assert "mild steel" in notes
 
@@ -116,9 +116,11 @@ def test_expiry():
 def test_ai_failures_are_explained_without_leaking_details():
     from app.api.quotes import explain_ai_failure
     leaked = "AI Quote engine failed: Error code: 403 - [{'error': {'code': 403, 'message': 'Your API key was reported as leaked. Please use another API key.'}}]"
-    assert "disabled your Gemini API key" in explain_ai_failure(leaked)
-    assert "quota" in explain_ai_failure("Error code: 429 - RESOURCE_EXHAUSTED").lower()
-    assert "No Gemini API key" in explain_ai_failure("No Gemini API key is configured for this workspace")
+    assert "AIML API refused" in explain_ai_failure(leaked)
+    assert "rejected" in explain_ai_failure("Error code: 401 - Unauthorized")
+    assert "out of credit" in explain_ai_failure("Error code: 402 - insufficient balance")
+    assert "rate limit" in explain_ai_failure("Error code: 429 - Too Many Requests").lower()
+    assert "No AI API key" in explain_ai_failure("No AI API key is configured for this workspace")
     generic = explain_ai_failure("KeyError: 'secret-internal-thing'")
     assert "secret-internal-thing" not in generic and "Quote calculation failed" in generic
 
@@ -126,8 +128,10 @@ def test_ai_failures_are_explained_without_leaking_details():
 def test_engine_falls_back_when_models_are_busy_or_retired(monkeypatch):
     from app.services import ai_engine
     monkeypatch.setattr(ai_engine, "RETRY_DELAY_SECONDS", 0)
-    monkeypatch.setattr(ai_engine.settings, "GEMINI_MODEL", "main")
-    monkeypatch.setattr(ai_engine.settings, "GEMINI_FALLBACK_MODELS", "retired, backup ,main")
+    from app.services import ai_provider
+    monkeypatch.setattr(ai_provider, "_stored_settings", lambda: {})
+    monkeypatch.setattr(ai_provider.settings, "AI_MODEL", "main")
+    monkeypatch.setattr(ai_provider.settings, "AI_FALLBACK_MODELS", "retired, backup ,main")
     assert ai_engine.candidate_models() == ["main", "retired", "backup"]
     calls = []
 
@@ -144,7 +148,7 @@ def test_engine_falls_back_when_models_are_busy_or_retired(monkeypatch):
     assert calls == ["main", "main", "retired", "backup"]  # busy model retried once, retired one skipped
 
     calls.clear()
-    monkeypatch.setattr(ai_engine, "_generate_once", lambda c, m, s, u: (calls.append(m), (_ for _ in ()).throw(Exception("Error code: 403 - reported as leaked")))[1])
+    monkeypatch.setattr(ai_engine, "_generate_once", lambda c, m, s, u: (calls.append(m), (_ for _ in ()).throw(Exception("Error code: 401 - invalid api key, reported as leaked")))[1])
     import pytest
     with pytest.raises(RuntimeError, match="leaked"):
         ai_engine._generate_with_fallbacks(None, "s", "u")
@@ -160,3 +164,57 @@ def test_range_estimates_are_flagged_but_keep_their_price():
     assert delivery.total_price == 2000 and delivery.needs_review is True
     assert any(n.startswith("Estimated from a range") and "Local delivery" in n for n in out.review_notes)
     assert not any(n.startswith("No price found") for n in out.review_notes)
+
+
+def test_admin_model_choice_overrides_env_default(monkeypatch):
+    from app.services import ai_provider
+    monkeypatch.setattr(ai_provider.settings, "AI_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.setattr(ai_provider.settings, "AI_FALLBACK_MODELS", "openai/gpt-4.1-mini")
+    monkeypatch.setattr(ai_provider, "_stored_settings", lambda: {})
+    assert ai_provider.candidate_models() == ["openai/gpt-4o-mini", "openai/gpt-4.1-mini"]
+    monkeypatch.setattr(ai_provider, "_stored_settings", lambda: {"ai_model": "anthropic/claude-haiku-4.5", "ai_fallback_models": ""})
+    assert ai_provider.active_model() == "anthropic/claude-haiku-4.5"
+    assert ai_provider.candidate_models() == ["anthropic/claude-haiku-4.5"]
+
+
+def test_model_list_keeps_only_chat_models_and_survives_outage(monkeypatch):
+    from app.services import ai_provider
+    rows = {"data": [
+        {"id": "openai/gpt-4o-mini", "type": "openai/chat-completions", "info": {"name": "GPT-4o Mini", "developer": "Open AI"}},
+        {"id": "openai/gpt-4o-mini", "type": "openai/chat-completions", "info": {}},
+        {"id": "flux/schnell", "type": "openai/image-generations", "info": {}},
+    ]}
+
+    class Resp:
+        def raise_for_status(self): pass
+        def json(self): return rows
+
+    monkeypatch.setattr(ai_provider, "_models_cache", {"at": 0.0, "models": []})
+    monkeypatch.setattr(ai_provider.httpx, "get", lambda *a, **k: Resp())
+    models, live = ai_provider.list_chat_models()
+    assert live and [m["id"] for m in models] == ["openai/gpt-4o-mini"]
+
+    monkeypatch.setattr(ai_provider, "_models_cache", {"at": 0.0, "models": []})
+    def boom(*a, **k): raise RuntimeError("offline")
+    monkeypatch.setattr(ai_provider.httpx, "get", boom)
+    models, live = ai_provider.list_chat_models()
+    assert not live and models[0]["id"] == "openai/gpt-4o-mini"
+
+
+def test_connection_drop_is_retried_then_falls_back(monkeypatch):
+    from app.services import ai_engine, ai_provider
+    monkeypatch.setattr(ai_engine, "RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr(ai_provider, "_stored_settings", lambda: {})
+    monkeypatch.setattr(ai_provider.settings, "AI_MODEL", "main")
+    monkeypatch.setattr(ai_provider.settings, "AI_FALLBACK_MODELS", "backup")
+    calls = []
+
+    def fake_once(client, model, system, user):
+        calls.append(model)
+        if model == "main":
+            raise Exception("Connection error.")
+        return "QUOTE"
+
+    monkeypatch.setattr(ai_engine, "_generate_once", fake_once)
+    assert ai_engine._generate_with_fallbacks(None, "s", "u") == "QUOTE"
+    assert calls == ["main", "main", "backup"]

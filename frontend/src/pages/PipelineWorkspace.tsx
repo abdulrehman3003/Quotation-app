@@ -530,6 +530,24 @@ export const PipelineWorkspace: React.FC = () => {
                       </div>
                     )}
 
+                    {activeQuote && (activeQuote.follow_up_log || []).length > 0 && (
+                      <div>
+                        <h3 className="section-title mb-2">Automatic follow-ups</h3>
+                        <ul className="card divide-y divide-slate-800">
+                          {(activeQuote.follow_up_log || []).map((entry, i) => (
+                            <li key={i} className="px-4 py-2.5">
+                              <p className="text-xs text-slate-400">
+                                {new Date(entry.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} ·{' '}
+                                {entry.kind === 'expiry_reminder' ? 'Expiry reminder' : entry.kind === 'chat_nudge' ? 'Check-in' : 'Follow-up'} ·{' '}
+                                {entry.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}
+                              </p>
+                              <p className="mt-0.5 text-xs text-slate-300 whitespace-pre-line line-clamp-3">{entry.text}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
                     {activeQuote && (
                       <div>
                         <h3 className="section-title mb-2">Send to</h3>
@@ -787,11 +805,16 @@ export const PipelineWorkspace: React.FC = () => {
                         onChange={(e) => edit(setEmailText)(e.target.value)}
                         className="input flex-1 resize-none leading-6"
                       />
-                      {!isDispatched && dirty && hasItems && (
+                      {!isDispatched && hasItems && (emailText.includes('=== End of quotation ===') ? (
+                        <p className="mt-2 text-xs text-slate-500">
+                          The quotation table (between the === lines) is built from the line items and updates when you save.
+                          {dirty && <span className="text-amber-300"> Save to update it with your changes.</span>}
+                        </p>
+                      ) : dirty && (
                         <p className="mt-2 text-xs text-amber-300">
                           You changed the figures. Make sure the prices written in this reply still match.
                         </p>
-                      )}
+                      ))}
                       {!isDispatched && customerLink && (
                         <p className="mt-2 text-xs text-slate-500">
                           A link to the online quote, where the customer can print or accept it, is added to the email.

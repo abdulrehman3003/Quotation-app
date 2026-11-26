@@ -185,7 +185,8 @@ Still open: rotate secrets leaked in git history; per-process rate limiter; LLM 
 
 ## 12. Pre-production security checklist (do before final deployment)
 
-- [ ] **Delete the temporary dev admin `admin@admin.com`** (created 2026-11-25 for local testing; weak password). Supabase → Authentication → Users → delete it; the `public.users` row goes with it. Create the real admin with a strong password and set its `role = 'admin'`.
+- [x] **Delete the temporary dev admin `admin@admin.com`** — done 2026-11-26. The admin is `axrflows@gmail.com` (platform company, no customer workspace). Still to do: set a strong admin password in Admin → My Account.
+  - Previously: (created 2026-11-25 for local testing; weak password). Supabase → Authentication → Users → delete it; the `public.users` row goes with it. Create the real admin with a strong password and set its `role = 'admin'`.
   - Enforced: with `ENV=production`, `check_no_temp_admin()` in `backend/app/main.py` makes the backend **refuse to start** while that account exists.
 - [ ] Set `ENV=production` in the deployment environment (otherwise the check above is skipped).
 - [ ] Rotate secrets leaked in git history (§8 #3).

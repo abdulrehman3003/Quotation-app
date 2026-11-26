@@ -1,6 +1,6 @@
 # AXRFLOWS — AI quotation workspace
 
-AXRFLOWS turns customer enquiries from email, WhatsApp or a webhook into priced quotes and a drafted reply. It prices each request against the business's own price lists (Excel, CSV or PDF) using an LLM (Google Gemini). Staff review the draft, then send it. The customer opens an online quote page and accepts or declines.
+AXRFLOWS turns customer enquiries from email, WhatsApp or a webhook into priced quotes and a drafted reply. It prices each request against the business's own price lists (Excel, CSV or PDF) using an LLM served through [AIML API](https://aimlapi.com) (default model `openai/gpt-4o-mini`; any of its chat models can be picked in the admin panel). Staff review the draft, then send it. The customer opens an online quote page and accepts or declines.
 
 Flow: **Enquiry → AI draft quote → review and edit → send → customer accepts or declines → reports**
 
@@ -19,7 +19,7 @@ Flow: **Enquiry → AI draft quote → review and edit → send → customer acc
 
 | Part | Stack |
 |---|---|
-| Backend | Python 3.11+, FastAPI, supabase-py, OpenAI SDK pointed at Gemini, managed with `uv` |
+| Backend | Python 3.11+, FastAPI, supabase-py, OpenAI SDK pointed at AIML API, managed with `uv` |
 | Frontend | React 18, Vite, TypeScript, Tailwind CSS, Zustand |
 | Database, auth and storage | Supabase (Postgres, Auth, Storage) |
 | Messaging | SMTP / IMAP, Twilio WhatsApp |
@@ -40,7 +40,7 @@ Prerequisites: Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 20+, and 
 
 ```bash
 cd backend
-cp .env.example .env        # fill in SUPABASE_*, GEMINI_API_KEY at minimum
+cp .env.example .env        # fill in SUPABASE_*, AI_API_KEY at minimum
 uv sync
 uv run python -m app.main   # http://127.0.0.1:8000, docs at /docs
 ```
@@ -73,7 +73,7 @@ Every backend setting is documented in [`backend/.env.example`](backend/.env.exa
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` | Required |
 | `ENCRYPTION_KEY` | Encrypts stored mailbox and Twilio credentials. Set it once and never change it (see the deployment guide) |
-| `GEMINI_API_KEY`, `GEMINI_MODEL` | The AI model that drafts quotes |
+| `AI_API_KEY`, `AI_MODEL` | AIML API key and default model. Change the model later in Admin → System Settings → AI Model |
 | `FRONTEND_URL` | Allowed CORS origin; also used to build customer quote links |
 | `PUBLIC_BACKEND_URL` | Public backend URL, used for Twilio signature checks and OAuth callbacks |
 | `ENV=production` | Turns on production safety checks |

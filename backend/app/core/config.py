@@ -20,14 +20,16 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str = Field(..., env="SUPABASE_JWT_SECRET")
     ENCRYPTION_KEY: str | None = Field(None, env="ENCRYPTION_KEY")
     
-    # Gemini Settings (via OpenAI SDK compatibility)
-    GEMINI_API_KEY: str | None = Field(None, env="GEMINI_API_KEY")
-    OPENAI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    GEMINI_MODEL: str = "gemini-3.8-flash"
-    # Tried in order when the main model is overloaded or has been retired by Google.
-    GEMINI_FALLBACK_MODELS: str = "gemini-3.5-flash,gemini-flash-latest"
-    # low | medium | high, or empty for the model's own default (slow: can exceed a minute per quote).
-    GEMINI_REASONING_EFFORT: str = "low"
+    # AI provider: AIML API (https://aimlapi.com), OpenAI-compatible.
+    # The model is picked in Admin > System Settings; AI_MODEL is the default.
+    AI_API_KEY: str | None = None
+    AI_BASE_URL: str = "https://api.aimlapi.com/v1"
+    AI_MODELS_URL: str = "https://api.aimlapi.com/models"
+    AI_MODEL: str = "openai/gpt-4o-mini"
+    # Tried in order when the main model is overloaded or unavailable (comma-separated).
+    AI_FALLBACK_MODELS: str = "openai/gpt-4.1-mini"
+    # low | medium | high for reasoning models (o-series, gpt-5); leave empty for gpt-4o / gpt-4.1.
+    AI_REASONING_EFFORT: str = ""
     
     # Twilio WhatsApp Settings (Optional - falls back to mock)
     TWILIO_ACCOUNT_SID: str | None = Field(None, env="TWILIO_ACCOUNT_SID")

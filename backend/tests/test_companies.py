@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core import security, tenancy
+from app.core import security, tenancy, plans
 from app.core.encryption import encrypt_key
 from app.core.security import get_current_user
 from app.api import admin as admin_api, users as users_api, oauth as oauth_api
@@ -33,7 +33,7 @@ class FakeAuthAdmin:
 def env(monkeypatch):
     db = FakeSupabase()
     db.auth = types.SimpleNamespace(admin=FakeAuthAdmin())
-    for module in (admin_api, users_api, tenancy, security, mail_oauth):
+    for module in (admin_api, users_api, tenancy, security, mail_oauth, plans):
         monkeypatch.setattr(module, "supabase", db)
     db.tables["companies"] = [
         {"id": security.DEFAULT_COMPANY_ID, "name": "Default Company", "created_at": "2026-01-01"},

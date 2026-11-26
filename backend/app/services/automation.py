@@ -29,7 +29,29 @@ DEFAULTS = {
     "follow_up_after_days": 3,
     "webhook_url": None,
     "webhook_secret": None,
+    # Automatic WhatsApp follow-ups and reminders (app/services/followups.py); all off by default.
+    "wa_follow_up": False,
+    "wa_follow_up_after_hours": 6,
+    "chat_nudge": False,
+    "chat_nudge_after_hours": 4,
+    "expiry_reminder": False,
+    "expiry_reminder_days_before": 1,
+    # Staff-only reminders in the app; on by default because they never contact a customer.
+    "team_reminders": True,
+    "team_reminder_after_days": 3,
+    # Automatic customer messages are only sent inside business hours.
+    "timezone": "Asia/Dubai",
+    "business_hours_start": 9,
+    "business_hours_end": 18,
+    "business_days": ["mon", "tue", "wed", "thu", "fri", "sat"],
 }
+
+_BOUNDS = {
+    "follow_up_after_days": (1, 30), "wa_follow_up_after_hours": (1, 22), "chat_nudge_after_hours": (1, 22),
+    "expiry_reminder_days_before": (1, 7), "team_reminder_after_days": (1, 30),
+    "business_hours_start": (0, 23), "business_hours_end": (1, 24),
+}
+_FLAGS = ("auto_draft_quotes", "auto_follow_up", "wa_follow_up", "chat_nudge", "expiry_reminder", "team_reminders")
 MIGRATION_HINT = "Automation needs database migration v7 (database/migration_v7_automation.sql)."
 
 
@@ -72,12 +94,26 @@ def validate_webhook_url(url: str) -> str:
 
 def save_company_settings(company_id: str, changes: dict) -> dict:
     current = get_company_settings(company_id)
-    if "auto_draft_quotes" in changes:
-        current["auto_draft_quotes"] = bool(changes["auto_draft_quotes"])
-    if "auto_follow_up" in changes:
-        current["auto_follow_up"] = bool(changes["auto_follow_up"])
-    if changes.get("follow_up_after_days") is not None:
-        current["follow_up_after_days"] = min(max(int(changes["follow_up_after_days"]), 1), 30)
+    for flag in _FLAGS:
+        if flag in changes and changes[flag] is not None:
+            current[flag] = bool(changes[flag])
+    for key, (low, high) in _BOUNDS.items():
+        if changes.get(key) is not None:
+            current[key] = min(max(int(changes[key]), low), high)
+    if current["business_hours_end"] <= current["business_hours_start"]:
+        raise ValueError("Business hours must end after they start.")
+    if changes.get("timezone"):
+        from zoneinfo import ZoneInfo
+        try:
+            ZoneInfo(str(changes["timezone"]))
+        except Exception:
+            raise ValueError("Unknown time zone. Use a name like Asia/Dubai or Asia/Karachi.")
+        current["timezone"] = str(changes["timezone"])
+    if changes.get("business_days") is not None:
+        days = [d for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun") if d in {str(x).lower()[:3] for x in changes["business_days"]}]
+        if not days:
+            raise ValueError("Choose at least one business day.")
+        current["business_days"] = days
     if "webhook_url" in changes:
         url = (changes["webhook_url"] or "").strip()
         if url:
@@ -227,12 +263,17 @@ def run_follow_ups(now: datetime | None = None) -> int:
     except Exception:
         return 0  # migration v7 not applied: feature is off
 
+    from app.services import followups
+
     sent_count = 0
     for row in rows:
         cfg = {**DEFAULTS, **(row.get("settings") or {})}
         if not cfg.get("auto_follow_up"):
             continue
         company_id = row["company_id"]
+        from app.core import plans
+        if plans.is_suspended(company_id) or not followups.within_business_hours(cfg, now):
+            continue
         try:
             quotes = supabase.table("quotes").select("*").eq("company_id", company_id)\
                 .eq("status", "dispatched").is_("outcome", "null").is_("follow_up_sent_at", "null").execute().data or []
@@ -243,6 +284,11 @@ def run_follow_ups(now: datetime | None = None) -> int:
         for quote in quotes:
             if not is_due_for_follow_up(quote, int(cfg.get("follow_up_after_days") or 3), now):
                 continue
+            if followups.automatic_count(quote) >= followups.MAX_AUTOMATIC_PER_QUOTE:
+                continue
+            sent_at = followups.parse_ts(quote.get("sent_at")) or followups.parse_ts(quote.get("created_at"))
+            if followups._customer_emailed_since(quote, sent_at):
+                continue  # the customer wrote back: a person should answer, not an automatic reminder
             gmail_email, gmail_password = get_gmail_credentials(quote.get("user_id"))
             if not gmail_email or not gmail_password:
                 break  # no mailbox for this company; nothing can be sent
@@ -262,6 +308,7 @@ def run_follow_ups(now: datetime | None = None) -> int:
             try:
                 if send_smtp_email(quote["customer_email"], subject, body, gmail_email, gmail_password):
                     sent_count += 1
+                    followups.record(quote, None, "quote_follow_up", "email", body, now)
                     logger.warning(f"Automatic follow-up sent for quote {quote.get('quote_number') or quote['id']}.")
             except Exception as e:
                 # Stays claimed: one missed follow-up is better than a customer emailed repeatedly.

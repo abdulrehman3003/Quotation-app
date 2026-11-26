@@ -74,7 +74,7 @@ def get_admin_credentials() -> dict:
     return {}
 
 
-def get_gemini_api_key(user_id: str | None = None) -> str | None:
+def get_ai_api_key(user_id: str | None = None) -> str | None:
     # 1. Check user key (and company teammates' key) if user_id is provided
     if user_id:
         try:
@@ -92,7 +92,7 @@ def get_gemini_api_key(user_id: str | None = None) -> str | None:
             logger.error(f"Failed to fetch gemini key for user {user_id}: {str(e)}")
 
     # 2. Check environment setting
-    env_key = settings.GEMINI_API_KEY
+    env_key = settings.AI_API_KEY
     if env_key and not is_placeholder(env_key):
         return env_key
 

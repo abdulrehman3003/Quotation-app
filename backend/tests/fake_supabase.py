@@ -50,6 +50,22 @@ class _Query:
 
     def execute(self):
         rows = self.db.tables.setdefault(self.table, [])
+        if self.op in ("insert", "upsert") and isinstance(self.payload, list):
+            # Several rows at once: run each through the single-row logic.
+            out = []
+            for item in self.payload:
+                single = _Query(self.db, self.table)
+                single.op, single.payload = self.op, item
+                single._conflict = getattr(self, "_conflict", "id")
+                out.extend(single.execute().data)
+            return _Result(out)
+        if self.op == "upsert" and "," in self._conflict:
+            keys = [k.strip() for k in self._conflict.split(",")]
+            for r in rows:
+                if all(r.get(k) == self.payload.get(k) for k in keys):
+                    r.update(copy.deepcopy(self.payload))
+                    return _Result([copy.deepcopy(r)])
+            self.op = "insert"
         if self.op == "upsert":
             for r in rows:
                 if r.get(self._conflict) == self.payload.get(self._conflict):

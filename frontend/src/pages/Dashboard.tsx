@@ -4,6 +4,7 @@ import { useWorkspaceStore, Lead } from '../store/workspaceStore'
 import {
   AlertTriangle, ArrowRight, CheckCircle2, Clock, Database, Globe, Inbox, Mail, MessageSquare,
   PenLine, Plus, Trash2, X, type LucideIcon,
+  Store,
 } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -16,6 +17,7 @@ const sourceIcon: Record<string, LucideIcon> = {
   whatsapp: MessageSquare,
   webhook: Globe,
   manual: PenLine,
+  'walk-in': Store,
 }
 
 // Same wording as the pipeline so a lead never has two names for one state.
@@ -60,7 +62,20 @@ export const Dashboard: React.FC = () => {
     deleteLead,
     setActiveLead,
     loadingLeads,
+    teamReminders,
+    fetchTeamReminders,
   } = useWorkspaceStore()
+
+  useEffect(() => {
+    fetchTeamReminders()
+  }, [fetchTeamReminders])
+
+  const openReminder = async (leadId: string | null) => {
+    const lead = leads.find((l) => l.id === leadId)
+    if (!lead) return
+    await setActiveLead(lead)
+    navigate('/workspace')
+  }
 
   const [showNewLead, setShowNewLead] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -315,6 +330,36 @@ export const Dashboard: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            {/* Team reminders: quotes waiting on the customer, quotes about to expire */}
+            {teamReminders?.enabled && (teamReminders.waiting.length > 0 || teamReminders.expiring.length > 0) && (
+              <section className="card lg:col-span-3" aria-labelledby="reminders-title">
+                <div className="px-5 py-4 border-b border-slate-800">
+                  <h2 id="reminders-title" className="section-title">Follow up with these customers</h2>
+                  <p className="mt-0.5 text-xs text-slate-500">Sent quotes with no answer for {teamReminders.after_days}+ days, and quotes that expire soon.</p>
+                </div>
+                <ul className="divide-y divide-slate-800">
+                  {[...teamReminders.expiring.map((r) => ({ ...r, why: r.days_left === 0 ? 'Expires today' : `Expires in ${r.days_left} day${r.days_left === 1 ? '' : 's'}`, tone: 'text-amber-300' })),
+                    ...teamReminders.waiting.filter((w) => !teamReminders.expiring.some((e) => e.quote_id === w.quote_id))
+                      .map((r) => ({ ...r, why: `No answer for ${r.days_waiting} days`, tone: 'text-slate-400' }))].map((r) => (
+                    <li key={r.quote_id}>
+                      <button onClick={() => openReminder(r.lead_id)} className="group w-full flex items-center gap-3 px-5 py-3 text-left cursor-pointer transition-colors hover:bg-slate-850">
+                        <span className="flex-1 min-w-0">
+                          <span className="block truncate text-sm text-slate-200">{r.customer} · {r.quote_number || 'Quote'}</span>
+                          <span className={`block text-xs ${r.tone}`}>
+                            {r.why}{r.automatic_messages ? ` · ${r.automatic_messages} automatic reminder${r.automatic_messages === 1 ? '' : 's'} sent` : ''}
+                          </span>
+                        </span>
+                        <span className="text-sm tabular-nums text-slate-300 whitespace-nowrap">
+                          {r.total.toLocaleString(undefined, { maximumFractionDigits: 0 })} {r.currency}
+                        </span>
+                        <ArrowRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-slate-200" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             {/* Recent leads */}
             <section className="card lg:col-span-2" aria-labelledby="recent-title">
               <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">

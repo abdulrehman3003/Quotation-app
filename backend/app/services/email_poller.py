@@ -177,14 +177,23 @@ def poll_gmail_once():
     users_res = supabase.table("users").select(
         "id", "company_id", "role", "encrypted_gmail_email", "encrypted_gmail_password"
     ).execute()
-    profiles = users_res.data or []
+    from app.core import plans
+    suspended: dict[str, bool] = {}
+
+    def paused(company_id: str | None) -> bool:
+        key = company_id or DEFAULT_COMPANY_ID
+        if key not in suspended:
+            suspended[key] = plans.is_suspended(key)
+        return suspended[key]
+
+    profiles = [p for p in (users_res.data or []) if not paused(p.get("company_id"))]
     polled_addresses = set()
 
     # Mailboxes connected with Google / Microsoft sign-in
     from app.services import mail_oauth
     for connection in mail_oauth.list_connections():
         key = (connection.get("email") or "").strip().lower()
-        if not key or key in polled_addresses:
+        if not key or key in polled_addresses or paused(connection.get("company_id")):
             continue
         polled_addresses.add(key)
         try:
@@ -249,6 +258,11 @@ def poll_gmail_loop():
                 run_follow_ups()
             except Exception as follow_err:
                 logger.error(f"Automatic follow-up pass failed: {str(follow_err)}")
+            try:
+                from app.services.followups import run_all as run_whatsapp_follow_ups
+                run_whatsapp_follow_ups()
+            except Exception as follow_err:
+                logger.error(f"WhatsApp follow-up pass failed: {str(follow_err)}")
         time.sleep(interval)
 
 

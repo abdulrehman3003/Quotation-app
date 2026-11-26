@@ -23,8 +23,16 @@ import {
   Check
 } from 'lucide-react'
 
-// Where "Talk to us" on the pricing section sends people. Change to your real sales address.
+// Where "Book a demo" and "Talk to us" send people. Change these to your real details.
+// SALES_WHATSAPP: international number, digits only (e.g. '971501234567'). When set,
+// demo buttons open a WhatsApp chat; when empty they open an email to SALES_EMAIL.
 const SALES_EMAIL = 'sales@axrflows.com'
+const SALES_WHATSAPP = ''
+
+const DEMO_MESSAGE = 'Hi, I would like a demo of AXRFLOWS for my workshop.'
+const DEMO_URL = SALES_WHATSAPP
+  ? `https://wa.me/${SALES_WHATSAPP}?text=${encodeURIComponent(DEMO_MESSAGE)}`
+  : `mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AXRFLOWS demo request')}&body=${encodeURIComponent(DEMO_MESSAGE)}`
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate()
@@ -64,9 +72,9 @@ export const LandingPage: React.FC = () => {
   // Calculator computations
   const totalMinutesSaved = leadsCount * manualHours
   const hoursSavedPerMonth = Math.round(totalMinutesSaved / 60)
-  const conversionBoost = 18 // standard 18% boost by speed to lead
-  const extraDealsWon = Math.round((leadsCount * 0.15) * 0.18) // assuming 15% close rate baseline, 18% improvement
-  const estimatedValueCreated = extraDealsWon * dealValue + (hoursSavedPerMonth * 45) // value of hours + deals
+  const conversionBoost = 10 // assumed lift from replying faster; shown to the visitor as an estimate
+  const extraDealsWon = Math.round(leadsCount * 0.15 * (conversionBoost / 100)) // 15% baseline close rate
+  const estimatedValueCreated = extraDealsWon * dealValue + (hoursSavedPerMonth * 20) // hours at $20 + extra jobs
 
   // Pricing state
   const [billingYearly, setBillingYearly] = useState(false)
@@ -132,26 +140,30 @@ export const LandingPage: React.FC = () => {
 
   const faqs = [
     {
+      q: 'Will the AI send prices to my customers without my approval?',
+      a: 'No. Every quote stays a draft until someone on your team checks it and presses send. Lines the AI could not price from your list are flagged, and the quote cannot be sent until they are confirmed.'
+    },
+    {
+      q: 'What kind of business is it for?',
+      a: 'Workshops that quote custom work from a price list: steel and metal fabrication, aluminium and glass, signage, joinery and fit-out. If you send 30 or more quotes a month, one extra job won usually pays for the plan.'
+    },
+    {
+      q: 'What do I need to get started?',
+      a: 'Your price list, a few recent quotes, your sales email and a WhatsApp Business number. We handle the setup and test it with you before you go live.'
+    },
+    {
       q: 'How do I pay, and what does the setup fee cover?',
       a: 'You receive an invoice in US dollars and can pay by card or bank transfer. The one-time setup fee covers loading your price lists, connecting your inbox and WhatsApp number, and running test quotes with you until the prices are right. Monthly plans can be cancelled at any time.'
     },
     {
-      q: 'How does AXRFLOWS ingest pricing and lead data?',
-      a: 'AXRFLOWS features direct integration with email inboxes, WhatsApp APIs, and uploaded Knowledge Base sheets. Our AI-driven processing pipeline extracts semantic context, products, and customer needs to automatically run calculations.'
-    },
-    {
-      q: 'Is the pricing calculation engine customizable?',
-      a: 'Absolutely. You can import custom knowledge base Excel/PDF files containing product catalogs, tier structures, and markup rules. Our engine matches customer request parameters against these sheets to deliver exact calculations.'
-    },
-    {
-      q: 'How does the email and WhatsApp automation workflow function?',
-      a: 'Incoming messages are monitored, processed via the workspace context extractor, computed inside the pricing workspace, and draft quotation reports are generated. You can choose to review and send quotes manually, or configure automatic dispatch.'
-    },
-    {
-      q: 'Is my proprietary pricing data kept secure?',
-      a: 'Yes. All system resources, databases, and client files are encrypted both at rest and in transit. Your custom pricing models are private and isolated, accessed only by authorized team workspaces.'
+      q: 'Is my pricing data private?',
+      a: 'Yes. Each company’s price lists, customers and quotes are kept separate from every other company, connections use HTTPS, and stored mailbox and WhatsApp credentials are encrypted.'
     }
   ]
+
+  const bookDemo = () => {
+    window.open(DEMO_URL, '_blank', 'noopener')
+  }
 
   const handleCta = () => {
     if (session) {
@@ -200,7 +212,7 @@ export const LandingPage: React.FC = () => {
             <nav className="hidden md:flex items-center gap-1.5 p-1.5 bg-slate-900/30 border border-slate-900/50 rounded-full">
               {[
                 { id: 'features', label: 'Features' },
-                { id: 'sandbox', label: 'Sandbox Calculator' },
+                { id: 'sandbox', label: 'Savings' },
                 { id: 'how-it-works', label: 'How It Works' },
                 { id: 'pricing', label: 'Pricing' },
                 { id: 'faq', label: 'FAQ' }
@@ -229,11 +241,11 @@ export const LandingPage: React.FC = () => {
                 {session ? 'Dashboard' : 'Sign In'}
               </button>
               <button
-                onClick={handleCta}
+                onClick={bookDemo}
                 id="nav-cta-get-started"
                 className="text-sm font-semibold bg-brand-500 hover:bg-brand-600 text-white px-5 py-2.5 rounded-full transition-colors cursor-pointer"
               >
-                Get Started
+                Book a demo
               </button>
             </div>
 
@@ -262,7 +274,7 @@ export const LandingPage: React.FC = () => {
               onClick={() => scrollToSection('sandbox')} 
               className={`text-left text-sm font-semibold py-2.5 border-b border-slate-900/60 transition-colors ${activeSection === 'sandbox' ? 'text-brand-400' : 'text-slate-400'}`}
             >
-              Sandbox Calculator
+              Savings
             </button>
             <button 
               onClick={() => scrollToSection('how-it-works')} 
@@ -291,10 +303,10 @@ export const LandingPage: React.FC = () => {
                 {session ? 'Dashboard' : 'Sign In'}
               </button>
               <button
-                onClick={handleCta}
+                onClick={bookDemo}
                 className="flex-1 py-3 text-center text-sm font-semibold text-white bg-brand-500 hover:bg-brand-600 rounded-lg"
               >
-                Get Started
+                Book a demo
               </button>
             </div>
           </div>
@@ -310,31 +322,31 @@ export const LandingPage: React.FC = () => {
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs font-semibold text-brand-400 mb-8 animate-fade-in">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Introducing AXRFLOWS Pricing & Ingestion Engine</span>
+            <span>For metal, aluminium and glass workshops in the UAE</span>
           </div>
 
           {/* Heading */}
           <h1 className="text-4xl sm:text-6xl font-semibold tracking-tight text-white max-w-4xl leading-tight">
-            Automate Your Quotation Engine with{' '}
+            Reply to every quote request{' '}
             <span className="bg-clip-text text-transparent bg-gradient-to-r from-brand-400 via-indigo-400 to-brand-300">
-              Intelligent Lead Ingestion
+              before your competitor does
             </span>
           </h1>
 
           {/* Subtitle */}
           <p className="mt-6 text-base sm:text-lg text-slate-400 max-w-2xl leading-relaxed">
-            Ingest structured or unstructured inquiries from WhatsApp, emails, and Excel files. 
-            Instantly map items against proprietary knowledge models to formulate precise quotation drafts automatically.
+            Customers send a message, a sketch or a drawing on WhatsApp or email. AXRFLOWS reads it, prices it from
+            your own rate sheet and drafts the quote in AED, ready for your estimator to check and send. Minutes, not days.
           </p>
 
           {/* CTAs */}
           <div className="mt-10 flex flex-col sm:flex-row gap-4 items-center justify-center">
             <button
-              onClick={handleCta}
+              onClick={bookDemo}
               id="hero-cta-primary"
               className="w-full sm:w-auto px-8 py-4 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2"
             >
-              Deploy Your Engine
+              Book a free demo
               <ArrowRight className="w-5 h-5" />
             </button>
             <button
@@ -342,9 +354,13 @@ export const LandingPage: React.FC = () => {
               id="hero-cta-secondary"
               className="w-full sm:w-auto px-8 py-4 bg-slate-900/60 border border-slate-800 hover:border-slate-700 hover:bg-slate-900 text-slate-300 hover:text-white font-semibold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2"
             >
-              Interactive ROI Sandbox
+              See what you'd save
             </button>
           </div>
+
+          <p className="mt-6 text-xs sm:text-sm text-slate-500">
+            Set up for you in 48 hours · Uses your own prices · Cancel any time
+          </p>
 
           {/* Visual Showcase (Pipeline Mockup) */}
           <div className="mt-20 w-full max-w-5xl p-4 rounded-lg bg-slate-900/20 border border-slate-850 glass-panel relative">
@@ -355,9 +371,9 @@ export const LandingPage: React.FC = () => {
                 <div>
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                    Interactive Engine flow
+                    How a quote moves
                   </div>
-                  <h3 className="text-lg font-semibold text-white mt-1">AXRFLOWS Execution Pipeline</h3>
+                  <h3 className="text-lg font-semibold text-white mt-1">From WhatsApp message to accepted quote</h3>
                 </div>
                 <div className="flex gap-2">
                   <div className="w-3 h-3 rounded-full bg-slate-800" />
@@ -373,8 +389,8 @@ export const LandingPage: React.FC = () => {
                   <div className="w-12 h-12 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 mb-4 transition-transform">
                     <Inbox className="w-6 h-6" />
                   </div>
-                  <h4 className="text-sm font-semibold text-white">1. Ingest Leads</h4>
-                  <p className="text-xs text-slate-400 mt-2">Catch incoming customer emails, WhatsApp chats, or uploaded specs.</p>
+                  <h4 className="text-sm font-semibold text-white">1. Enquiry arrives</h4>
+                  <p className="text-xs text-slate-400 mt-2">A WhatsApp message, an email, or a DXF / STL drawing from your customer.</p>
                   <div className="flex gap-1.5 mt-3">
                     <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-slate-400">Email</span>
                     <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-slate-400">WhatsApp</span>
@@ -386,10 +402,10 @@ export const LandingPage: React.FC = () => {
                   <div className="w-12 h-12 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-4 transition-transform">
                     <Database className="w-6 h-6" />
                   </div>
-                  <h4 className="text-sm font-semibold text-white">2. Match Context</h4>
-                  <p className="text-xs text-slate-400 mt-2">Query active knowledge sheets, product lists, and rule models.</p>
+                  <h4 className="text-sm font-semibold text-white">2. Priced from your rates</h4>
+                  <p className="text-xs text-slate-400 mt-2">Matched to your own price list: material, cutting, welding, coating, glass per m².</p>
                   <div className="flex gap-1.5 mt-3">
-                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-indigo-400 font-mono">vector_db</span>
+                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-indigo-400">Your price list</span>
                   </div>
                 </div>
 
@@ -398,10 +414,10 @@ export const LandingPage: React.FC = () => {
                   <div className="w-12 h-12 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 mb-4 transition-transform">
                     <Calculator className="w-6 h-6" />
                   </div>
-                  <h4 className="text-sm font-semibold text-white">3. Run Math Engine</h4>
-                  <p className="text-xs text-slate-400 mt-2">Compute exact quote breakdown using logic models & margin margins.</p>
+                  <h4 className="text-sm font-semibold text-white">3. Totals checked</h4>
+                  <p className="text-xs text-slate-400 mt-2">Line items, discount and VAT added up by the system, not guessed by the AI.</p>
                   <div className="flex gap-1.5 mt-3">
-                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Auto-Calculate</span>
+                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">VAT included</span>
                   </div>
                 </div>
 
@@ -410,10 +426,10 @@ export const LandingPage: React.FC = () => {
                   <div className="w-12 h-12 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 mb-4 transition-transform">
                     <Layers className="w-6 h-6" />
                   </div>
-                  <h4 className="text-sm font-semibold text-white">4. Output Quote</h4>
-                  <p className="text-xs text-slate-400 mt-2">Instantly compile formatted quotation PDFs or email draft reports.</p>
+                  <h4 className="text-sm font-semibold text-white">4. Sent and tracked</h4>
+                  <p className="text-xs text-slate-400 mt-2">Your customer gets a quote link to accept online. You see when they open it.</p>
                   <div className="flex gap-1.5 mt-3">
-                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-brand-400">PDF Report</span>
+                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-brand-400">Accept online</span>
                   </div>
                 </div>
               </div>
@@ -424,9 +440,9 @@ export const LandingPage: React.FC = () => {
         {/* Feature Highlights Grid */}
         <section id="features" className="py-24 border-t border-slate-900">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-semibold text-white">Built for Modern Pipeline Automation</h2>
+            <h2 className="text-3xl font-semibold text-white">Built for workshops that quote every day</h2>
             <p className="text-slate-400 text-sm mt-3 max-w-lg mx-auto">
-              Everything your quote team needs to eliminate manual data entry, incorrect calculations, and slow sales cycles.
+              Your estimator stops retyping messages into Excel, and every request gets a priced answer the same day.
             </p>
           </div>
 
@@ -436,9 +452,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-10 h-10 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 mb-6 transition-colors">
                 <Bot className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-semibold text-white">AI-Powered Extraction</h3>
+              <h3 className="text-lg font-semibold text-white">Reads messy requests</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed">
-                Extract details from free-text emails or WhatsApp messages instantly. AXRFLOWS identifies products requested, sizes, counts, and customer specs.
+                Understands “20 brackets, 6 mm MS, galvanised, deliver to Jebel Ali” and turns it into line items with sizes and quantities.
               </p>
             </div>
 
@@ -447,9 +463,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-6 transition-colors">
                 <Layers className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-semibold text-white">Knowledge Base Synchronization</h3>
+              <h3 className="text-lg font-semibold text-white">Uses your own price list</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed">
-                Upload price lists, vendor specs, or regulatory guidelines as Knowledge Sheets. System automatically references current models to avoid errors.
+                Upload your rate sheets in Excel, CSV or PDF. Prices come from your numbers, and anything not on the list is flagged for you to confirm.
               </p>
             </div>
 
@@ -458,9 +474,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-6 transition-colors">
                 <Calculator className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-semibold text-white">Complex Formula Engine</h3>
+              <h3 className="text-lg font-semibold text-white">Totals you can trust</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed">
-                Supports volume tier breaks, dynamic margins, shipping calculations, and bulk discounts. Configured easily within your pricing workspace.
+                Discount, VAT and a validity date on every quote. The system recalculates every total, so a wrong sum never reaches a customer.
               </p>
             </div>
 
@@ -469,9 +485,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-10 h-10 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 mb-6 transition-colors">
                 <MessageSquare className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-semibold text-white">WhatsApp Sandbox Integrator</h3>
+              <h3 className="text-lg font-semibold text-white">WhatsApp, where your customers are</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed">
-                Connect directly to your team WhatsApp numbers. Customer requests are processed instantly and drafts appear inside your pricing workspace.
+                Enquiries to your WhatsApp Business number arrive as draft quotes. Your team can take over the chat at any time.
               </p>
             </div>
 
@@ -480,9 +496,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-10 h-10 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 mb-6 transition-colors">
                 <Mail className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-semibold text-white">Smart Email Channels</h3>
+              <h3 className="text-lg font-semibold text-white">Your inbox, handled</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed">
-                Link sales inboxes. Parse incoming client messages or Request For Quotations (RFQs) and export finished calculations with one single click.
+                Connect your sales email. Requests and attachments become drafts, and unanswered quotes can get one polite follow-up automatically.
               </p>
             </div>
 
@@ -491,9 +507,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-6 transition-colors">
                 <Shield className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-semibold text-white">Full Revision Auditing</h3>
+              <h3 className="text-lg font-semibold text-white">Know what you win</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed">
-                Track every pricing calculation made, export reports, audit logs, and monitor conversion metrics from a central, secure administrator dashboard.
+                Win rate, won value and time to quote at a glance, with each customer's past prices on hand for the next job.
               </p>
             </div>
           </div>
@@ -508,19 +524,19 @@ export const LandingPage: React.FC = () => {
               <div>
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-xs font-semibold text-brand-400 mb-4">
                   <Calculator className="w-3.5 h-3.5" />
-                  <span>ROI Simulator</span>
+                  <span>Savings estimate</span>
                 </div>
-                <h2 className="text-3xl font-semibold text-white">Calculate Your Savings & Boost</h2>
+                <h2 className="text-3xl font-semibold text-white">How much is slow quoting costing you?</h2>
                 <p className="text-slate-400 text-sm mt-3 leading-relaxed">
-                  Adjust the inputs below to see how automated quotation pipelines, faster response speeds, and active context retrieval optimize your bottom line.
+                  Move the sliders to match your workshop. This is a rough estimate, not a promise: it assumes replying faster wins a few more jobs.
                 </p>
               </div>
 
               {/* Slider 1 */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm font-semibold">
-                  <span className="text-slate-300">Monthly Quote Queries Ingested</span>
-                  <span className="text-brand-400 font-mono">{leadsCount} leads</span>
+                  <span className="text-slate-300">Quote requests per month</span>
+                  <span className="text-brand-400 font-mono">{leadsCount} requests</span>
                 </div>
                 <input
                   type="range"
@@ -532,15 +548,15 @@ export const LandingPage: React.FC = () => {
                   className="w-full h-1.5 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-brand-500 border border-slate-800"
                 />
                 <div className="flex justify-between text-[11px] text-slate-500 font-medium">
-                  <span>10 leads</span>
-                  <span>1,000 leads</span>
+                  <span>10</span>
+                  <span>1,000</span>
                 </div>
               </div>
 
               {/* Slider 2 */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm font-semibold">
-                  <span className="text-slate-300">Average Deal Size (USD)</span>
+                  <span className="text-slate-300">Average job value (USD)</span>
                   <span className="text-brand-400 font-mono">${dealValue.toLocaleString()}</span>
                 </div>
                 <input
@@ -561,7 +577,7 @@ export const LandingPage: React.FC = () => {
               {/* Slider 3 */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm font-semibold">
-                  <span className="text-slate-300">Manual Ingestion Time (min/quote)</span>
+                  <span className="text-slate-300">Time to prepare one quote by hand</span>
                   <span className="text-brand-400 font-mono">{manualHours} mins</span>
                 </div>
                 <input
@@ -583,17 +599,17 @@ export const LandingPage: React.FC = () => {
             {/* Right Column: ROI Results Card */}
             <div className="lg:col-span-7 p-8 rounded-lg bg-slate-900/30 border border-slate-850 glass-panel relative">
               <div className="absolute top-0 right-0 p-4">
-                <span className="text-[11px] font-semibold font-mono tracking-wide text-slate-500 uppercase">Live calculations</span>
+                <span className="text-[11px] font-semibold font-mono tracking-wide text-slate-500 uppercase">Estimate</span>
               </div>
 
-              <h3 className="text-xl font-semibold text-white mb-6">AXRFLOWS Dynamic Impact</h3>
+              <h3 className="text-xl font-semibold text-white mb-6">What AXRFLOWS could be worth to you</h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
                 {/* Result Block 1 */}
                 <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-850 flex flex-col">
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-brand-400" />
-                    Time Reclaimed
+                    Time saved
                   </span>
                   <span className="text-2xl font-semibold text-white mt-2">
                     {hoursSavedPerMonth} hrs
@@ -605,19 +621,19 @@ export const LandingPage: React.FC = () => {
                 <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-850 flex flex-col">
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
                     <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                    Win Rate Lift
+                    Win-rate lift
                   </span>
                   <span className="text-2xl font-semibold text-emerald-400 mt-2">
                     +{conversionBoost}%
                   </span>
-                  <span className="text-[11px] text-slate-400 mt-1">due to instant response</span>
+                  <span className="text-[11px] text-slate-400 mt-1">assumed, from faster replies</span>
                 </div>
 
                 {/* Result Block 3 */}
                 <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-850 flex flex-col">
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
                     <DollarSign className="w-3.5 h-3.5 text-indigo-400" />
-                    Deals Incremented
+                    Extra jobs
                   </span>
                   <span className="text-2xl font-semibold text-white mt-2">
                     +{extraDealsWon} deals
@@ -629,18 +645,18 @@ export const LandingPage: React.FC = () => {
               {/* Big Estimated ROI Block */}
               <div className="p-6 rounded-lg bg-gradient-to-br from-brand-500/10 to-indigo-500/10 border border-brand-500/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                  <span className="text-xs font-semibold text-brand-400 uppercase tracking-wide">Est. Monthly Value Created</span>
+                  <span className="text-xs font-semibold text-brand-400 uppercase tracking-wide">Estimated value per month</span>
                   <h4 className="text-3xl sm:text-4xl font-semibold text-white mt-1">
                     ${estimatedValueCreated.toLocaleString()}
                   </h4>
-                  <p className="text-xs text-slate-400 mt-1">Based on saved engineering hours + sales acceleration.</p>
+                  <p className="text-xs text-slate-400 mt-1">Hours saved at $20 an hour, plus the extra jobs. The Growth plan costs $99 a month.</p>
                 </div>
                 <button
-                  onClick={handleCta}
+                  onClick={bookDemo}
                   id="sandbox-cta-action"
                   className="px-6 py-3 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap self-stretch sm:self-auto justify-center"
                 >
-                  Unlock This ROI
+                  Book a free demo
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -651,9 +667,9 @@ export const LandingPage: React.FC = () => {
         {/* How it works workflow */}
         <section id="how-it-works" className="py-24 border-t border-slate-900">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-semibold text-white">Simplifying the Pipeline in 3 Steps</h2>
+            <h2 className="text-3xl font-semibold text-white">Live in 48 hours. We do the setup.</h2>
             <p className="text-slate-400 text-sm mt-3 max-w-sm mx-auto">
-              No complex coding or lengthy integrations needed to start running.
+              No IT team and no training course. You send us your prices; we hand you a working system.
             </p>
           </div>
 
@@ -663,9 +679,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 text-brand-400 font-semibold text-lg flex items-center justify-center mb-6">
                 1
               </div>
-              <h3 className="text-lg font-semibold text-white">Ingest Client Files or Texts</h3>
+              <h3 className="text-lg font-semibold text-white">Send us your price list</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed max-w-xs">
-                Upload your inventory catalogs, rate files, or connect email/WhatsApp numbers directly inside the system.
+                Your rate sheet in any format, plus a few recent quotes. We load it and test it until the prices match yours.
               </p>
             </div>
 
@@ -674,9 +690,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 text-brand-400 font-semibold text-lg flex items-center justify-center mb-6">
                 2
               </div>
-              <h3 className="text-lg font-semibold text-white">Define Calculation Workspaces</h3>
+              <h3 className="text-lg font-semibold text-white">We connect WhatsApp and email</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed max-w-xs">
-                Map input labels to Excel columns or pricing variables to compile quote tables in real time.
+                Your WhatsApp Business number and sales inbox, connected for you. Enquiries start arriving as drafts.
               </p>
             </div>
 
@@ -685,9 +701,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 text-brand-400 font-semibold text-lg flex items-center justify-center mb-6">
                 3
               </div>
-              <h3 className="text-lg font-semibold text-white">Automate Despatch Reports</h3>
+              <h3 className="text-lg font-semibold text-white">Check, send, win</h3>
               <p className="text-slate-400 text-sm mt-3 leading-relaxed max-w-xs">
-                Receive pricing drafts. Review, print to PDF, or dispatch quotes directly to client channels automatically.
+                Review each draft, change anything you like, send it in one click, and see the moment your customer accepts.
               </p>
             </div>
           </div>
@@ -764,7 +780,7 @@ export const LandingPage: React.FC = () => {
                   </a>
                 ) : (
                   <button
-                    onClick={handleCta}
+                    onClick={bookDemo}
                     className={`mt-8 w-full py-3 text-sm font-semibold rounded-lg transition-colors cursor-pointer ${plan.highlight ? 'bg-brand-500 hover:bg-brand-600 text-white' : 'border border-slate-800 text-slate-200 hover:border-slate-700 hover:text-white'}`}
                   >
                     {plan.cta}
@@ -782,9 +798,9 @@ export const LandingPage: React.FC = () => {
         {/* FAQ Section */}
         <section id="faq" className="py-24 border-t border-slate-900 max-w-4xl mx-auto">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-semibold text-white">Frequently Answered Queries</h2>
+            <h2 className="text-3xl font-semibold text-white">Questions workshop owners ask</h2>
             <p className="text-slate-400 text-sm mt-3">
-              Everything you need to know about setting up AXRFLOWS.
+              Short answers. Ask us anything else on the demo call.
             </p>
           </div>
 
@@ -807,7 +823,7 @@ export const LandingPage: React.FC = () => {
                 </button>
                 <div
                   className={`transition-colors ease-in-out overflow-hidden ${
-                    activeFaq === index ? 'max-h-40 border-t border-slate-900/50' : 'max-h-0'
+                    activeFaq === index ? 'max-h-96 border-t border-slate-900/50' : 'max-h-0'
                   }`}
                 >
                   <p className="p-6 text-sm text-slate-400 leading-relaxed bg-slate-950/20">
@@ -825,24 +841,24 @@ export const LandingPage: React.FC = () => {
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 rounded-full bg-brand-500/10 blur-[80px] pointer-events-none" />
 
           <div className="relative z-10 max-w-2xl mx-auto px-6">
-            <h2 className="text-3xl sm:text-4xl font-semibold text-white">Ready to Scale Quotation Lifecycles?</h2>
+            <h2 className="text-3xl sm:text-4xl font-semibold text-white">Stop losing jobs to slow quotes</h2>
             <p className="text-slate-400 text-sm sm:text-base mt-4 leading-relaxed">
-              Deploy your workspace pricing model in minutes. Integrate with WhatsApp, parsing bots, and email automation today.
+              Book a 20-minute demo. Send us one of your real enquiries and we will show you the priced quote it turns into.
             </p>
             <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center items-center">
               <button
-                onClick={handleCta}
+                onClick={bookDemo}
                 id="footer-cta-primary"
                 className="w-full sm:w-auto px-8 py-3.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2"
               >
-                Launch Workspace
+                Book a free demo
                 <ArrowRight className="w-4 h-4" />
               </button>
               <button
-                onClick={() => scrollToSection('features')}
+                onClick={() => scrollToSection('pricing')}
                 className="w-full sm:w-auto px-8 py-3.5 bg-slate-950 border border-slate-850 hover:border-slate-750 text-slate-400 hover:text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer"
               >
-                Learn More
+                See pricing
               </button>
             </div>
           </div>

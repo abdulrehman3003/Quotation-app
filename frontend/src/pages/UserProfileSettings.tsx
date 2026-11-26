@@ -67,6 +67,16 @@ export default function UserProfileSettings() {
   const [autoFollowUp, setAutoFollowUp] = useState(false)
   const [followUpDays, setFollowUpDays] = useState('3')
   const [webhookUrl, setWebhookUrl] = useState('')
+  // WhatsApp follow-ups, reminders and business hours
+  const [fu, setFu] = useState({
+    wa_follow_up: false, wa_follow_up_after_hours: '6',
+    chat_nudge: false, chat_nudge_after_hours: '4',
+    expiry_reminder: false, expiry_reminder_days_before: '1',
+    team_reminders: true, team_reminder_after_days: '3',
+    timezone: 'Asia/Dubai', business_hours_start: '9', business_hours_end: '18',
+    business_days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as string[],
+  })
+  const setFuField = (key: keyof typeof fu, value: any) => setFu((prev) => ({ ...prev, [key]: value }))
   const [automationMessage, setAutomationMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [savingAutomation, setSavingAutomation] = useState(false)
 
@@ -80,6 +90,15 @@ export default function UserProfileSettings() {
     setAutoFollowUp(automation.auto_follow_up)
     setFollowUpDays(String(automation.follow_up_after_days || 3))
     setWebhookUrl(automation.webhook_url || '')
+    setFu({
+      wa_follow_up: !!automation.wa_follow_up, wa_follow_up_after_hours: String(automation.wa_follow_up_after_hours ?? 6),
+      chat_nudge: !!automation.chat_nudge, chat_nudge_after_hours: String(automation.chat_nudge_after_hours ?? 4),
+      expiry_reminder: !!automation.expiry_reminder, expiry_reminder_days_before: String(automation.expiry_reminder_days_before ?? 1),
+      team_reminders: automation.team_reminders !== false, team_reminder_after_days: String(automation.team_reminder_after_days ?? 3),
+      timezone: automation.timezone || 'Asia/Dubai',
+      business_hours_start: String(automation.business_hours_start ?? 9), business_hours_end: String(automation.business_hours_end ?? 18),
+      business_days: automation.business_days || ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+    })
   }, [automation])
 
   const handleSaveAutomation = async (e: React.FormEvent) => {
@@ -92,7 +111,19 @@ export default function UserProfileSettings() {
         auto_follow_up: autoFollowUp,
         follow_up_after_days: Math.min(Math.max(Math.round(Number(followUpDays)) || 3, 1), 30),
         webhook_url: webhookUrl.trim(),
-      })
+        wa_follow_up: fu.wa_follow_up,
+        wa_follow_up_after_hours: Number(fu.wa_follow_up_after_hours) || 6,
+        chat_nudge: fu.chat_nudge,
+        chat_nudge_after_hours: Number(fu.chat_nudge_after_hours) || 4,
+        expiry_reminder: fu.expiry_reminder,
+        expiry_reminder_days_before: Number(fu.expiry_reminder_days_before) || 1,
+        team_reminders: fu.team_reminders,
+        team_reminder_after_days: Number(fu.team_reminder_after_days) || 3,
+        timezone: fu.timezone.trim() || 'Asia/Dubai',
+        business_hours_start: Number(fu.business_hours_start),
+        business_hours_end: Number(fu.business_hours_end),
+        business_days: fu.business_days,
+      } as any)
       setAutomationMessage({ type: 'success', text: 'Automation settings saved.' })
     } catch (err: any) {
       setAutomationMessage({ type: 'error', text: err.message || 'Failed to save automation settings.' })
@@ -401,12 +432,12 @@ export default function UserProfileSettings() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-medium text-slate-100">Assistant</h3>
-                  <p className="text-xs text-slate-500">Gemini API key used to price requests and draft replies.</p>
+                  <p className="text-xs text-slate-500">Your own AIML API key (optional). Without one, the workspace uses the server's key.</p>
                 </div>
                 <Status on={!!userProfile?.has_gemini_key} />
               </div>
               <div>
-                <label htmlFor="set-gemini" className="label">Gemini API key</label>
+                <label htmlFor="set-gemini" className="label">AIML API key</label>
                 <input
                   id="set-gemini"
                   type="password"
@@ -560,8 +591,24 @@ export default function UserProfileSettings() {
                 leads, knowledge base and quotes.
               </p>
             </div>
+            {teamInfo?.plan && (
+              <div className="px-5 pt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
+                <span><span className="font-semibold text-slate-200">{teamInfo.plan.label} plan</span></span>
+                <span>
+                  Users: <span className="tabular-nums text-slate-200">{teamInfo.plan.users}{teamInfo.plan.max_users != null ? ` of ${teamInfo.plan.max_users}` : ''}</span>
+                </span>
+                <span>
+                  AI quotes this month: <span className="tabular-nums text-slate-200">{teamInfo.plan.quotes_this_month}{teamInfo.plan.max_quotes_per_month != null ? ` of ${teamInfo.plan.max_quotes_per_month}` : ''}</span>
+                </span>
+              </div>
+            )}
             <div className="p-5">
               <label htmlFor="set-invite" className="label">Invite link</label>
+              {teamInfo?.seats_full ? (
+                <p className="text-sm text-amber-400">
+                  Your {teamInfo.plan?.label} plan's user limit is reached. Contact us to upgrade and add more people.
+                </p>
+              ) : (
               <div className="flex gap-2">
                 <input id="set-invite" type="text" readOnly value={inviteLink || 'Generating link…'} className="input font-mono text-xs" />
                 <button type="button" onClick={handleCopyInviteLink} disabled={!inviteLink} className="btn btn-secondary shrink-0">
@@ -569,6 +616,7 @@ export default function UserProfileSettings() {
                   {copiedInvite ? 'Copied' : 'Copy link'}
                 </button>
               </div>
+              )}
             </div>
             <ul className="border-t border-slate-800 divide-y divide-slate-800">
               {(teamInfo?.members || []).map((member) => (
@@ -600,7 +648,7 @@ export default function UserProfileSettings() {
                 <span>
                   <span className="block text-sm font-medium text-slate-100">Draft quotes automatically from incoming email</span>
                   <span className="block text-xs text-slate-500">
-                    New customer emails become leads with an AI-drafted quote waiting in the pipeline. Nothing is sent until you review and send it. Uses your Gemini quota (up to 5 emails per check).
+                    New customer emails become leads with an AI-drafted quote waiting in the pipeline. Nothing is sent until you review and send it. Uses AI credits (up to 5 emails per check).
                   </span>
                 </span>
               </label>
@@ -630,6 +678,80 @@ export default function UserProfileSettings() {
                     />
                   </div>
                 )}
+              </div>
+
+              <div className="pt-4 border-t border-slate-800 space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-slate-100">WhatsApp follow-ups</p>
+                  <p className="text-xs text-slate-500">
+                    At most 2 automatic messages per quote. They stop as soon as the customer replies, accepts or declines, a person takes
+                    over the chat, or the customer replies STOP. WhatsApp only allows these within 24 hours of the customer's last message.
+                  </p>
+                </div>
+                {([
+                  ['wa_follow_up', 'wa_follow_up_after_hours', 'Follow up on unanswered WhatsApp quotes', 'One check-in about the quote if the customer goes quiet after receiving it.', 'Send after (hours)', 1, 22],
+                  ['chat_nudge', 'chat_nudge_after_hours', 'Nudge chats that go quiet before a quote', 'One short check-in about what they were asking for, written by the AI.', 'Send after (hours)', 1, 22],
+                  ['expiry_reminder', 'expiry_reminder_days_before', 'Remind customers before a quote expires', 'On WhatsApp when possible, otherwise by email.', 'Days before expiry', 1, 7],
+                ] as const).map(([flag, num, title, help, numLabel, min, max]) => (
+                  <div key={flag}>
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input type="checkbox" checked={fu[flag]} onChange={(e) => setFuField(flag, e.target.checked)} className="mt-0.5 h-4 w-4 accent-brand-500" />
+                      <span>
+                        <span className="block text-sm font-medium text-slate-100">{title}</span>
+                        <span className="block text-xs text-slate-500">{help}</span>
+                      </span>
+                    </label>
+                    {fu[flag] && (
+                      <div className="mt-2 ml-7 max-w-[180px]">
+                        <label className="label">{numLabel}</label>
+                        <input type="number" min={min} max={max} value={fu[num]} onChange={(e) => setFuField(num, e.target.value)} className="input tabular-nums" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                <div>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input type="checkbox" checked={fu.team_reminders} onChange={(e) => setFuField('team_reminders', e.target.checked)} className="mt-0.5 h-4 w-4 accent-brand-500" />
+                    <span>
+                      <span className="block text-sm font-medium text-slate-100">Remind my team about quotes waiting on the customer</span>
+                      <span className="block text-xs text-slate-500">Shown on the Dashboard and in the bell. Never sent to customers.</span>
+                    </span>
+                  </label>
+                  {fu.team_reminders && (
+                    <div className="mt-2 ml-7 max-w-[180px]">
+                      <label className="label">After (days)</label>
+                      <input type="number" min={1} max={30} value={fu.team_reminder_after_days} onChange={(e) => setFuField('team_reminder_after_days', e.target.value)} className="input tabular-nums" />
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <p className="label">Business hours for automatic messages</p>
+                  <div className="grid grid-cols-3 gap-3 max-w-md">
+                    <select value={fu.timezone} onChange={(e) => setFuField('timezone', e.target.value)} className="input col-span-3 sm:col-span-1">
+                      {['Asia/Dubai', 'Asia/Riyadh', 'Asia/Karachi', 'Asia/Qatar', 'Africa/Johannesburg', 'Europe/London', 'Europe/Madrid', 'America/Sao_Paulo', 'America/New_York'].map(z => <option key={z} value={z}>{z}</option>)}
+                    </select>
+                    <select value={fu.business_hours_start} onChange={(e) => setFuField('business_hours_start', e.target.value)} className="input" aria-label="Start">
+                      {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+                    </select>
+                    <select value={fu.business_hours_end} onChange={(e) => setFuField('business_hours_end', e.target.value)} className="input" aria-label="End">
+                      {Array.from({ length: 24 }, (_, h) => h + 1).map(h => <option key={h} value={h}>{String(h % 24).padStart(2, '0')}:00</option>)}
+                    </select>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map(d => (
+                      <button
+                        type="button"
+                        key={d}
+                        onClick={() => setFuField('business_days', fu.business_days.includes(d) ? fu.business_days.filter(x => x !== d) : [...fu.business_days, d])}
+                        className={`px-2.5 py-1 rounded-full text-xs border capitalize cursor-pointer ${fu.business_days.includes(d) ? 'border-brand-500 bg-brand-500/15 text-brand-200' : 'border-slate-700 text-slate-400'}`}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div>

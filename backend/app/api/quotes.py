@@ -141,9 +141,14 @@ def quote_defaults(user_profile: dict | None) -> dict:
 
 def build_quote_fields(ai_output, user_profile: dict | None) -> dict:
     """Database fields for a quote produced by the AI engine (shared by the pipeline and WhatsApp)."""
+    from app.services.quote_text import apply_pricing_block, render_pricing_block, reply_warnings
     defaults = quote_defaults(user_profile)
     items = normalize_items(ai_output.itemized_breakdown)
     totals = compute_totals(items, 0, defaults["tax_percent"])
+    quote_number = new_quote_number()
+    # The priced part of the reply comes from the line items, not from the AI's prose.
+    reply = apply_pricing_block(ai_output.email_draft, render_pricing_block(
+        items, defaults["currency"], 0, totals["tax_percent"], quote_number, defaults["valid_until"]))
     return {
         "material_cost": totals["material_cost"],
         "labor_cost": totals["labor_cost"],
@@ -152,16 +157,16 @@ def build_quote_fields(ai_output, user_profile: dict | None) -> dict:
         "tax_percent": totals["tax_percent"],
         "total_cost": totals["total_cost"],
         "itemized_breakdown": items,
-        "email_draft": ai_output.email_draft,
+        "email_draft": reply,
         "currency": defaults["currency"],
         "valid_until": defaults["valid_until"],
-        "quote_number": new_quote_number(),
+        "quote_number": quote_number,
         "public_token": new_public_token(),
         "customer_name": ai_output.customer_name,
         "customer_email": ai_output.customer_email,
         "customer_phone": ai_output.customer_phone,
         "customer_company": ai_output.customer_company,
-        "review_notes": list(ai_output.review_notes or []),
+        "review_notes": list(ai_output.review_notes or []) + reply_warnings(reply, items),
     }
 
 
@@ -196,6 +201,8 @@ def safe_parse_quote(q: dict) -> dict:
     q["itemized_breakdown"] = normalize_items(breakdown if isinstance(breakdown, list) else [])
     notes = q.get("review_notes")
     q["review_notes"] = [str(n) for n in notes] if isinstance(notes, list) else []
+    log = q.get("follow_up_log")
+    q["follow_up_log"] = [e for e in log if isinstance(e, dict)] if isinstance(log, list) else []
     return q
 
 
@@ -209,21 +216,20 @@ def _get_company_quote(quote_id: str, company_id: str) -> dict:
 def explain_ai_failure(error_text: str) -> str:
     """Turns an AI provider failure into something the user can act on (never echoes the raw error)."""
     text = error_text.lower()
-    if "no gemini api key" in text:
-        return "No Gemini API key is connected. Add one in Settings to generate quotes."
-    if "reported as leaked" in text:
-        return ("Google has disabled your Gemini API key because it was found exposed publicly. "
-                "Create a new key in Google AI Studio and save it in Settings.")
-    if "api key not valid" in text or "api_key_invalid" in text or "error code: 401" in text:
-        return "Your Gemini API key was rejected. Check the key saved in Settings."
+    if "no ai api key" in text:
+        return "No AI API key is connected. Add your AIML API key in Settings to generate quotes."
+    if "error code: 401" in text or "invalid api key" in text or "unauthorized" in text:
+        return "Your AIML API key was rejected. Check the key saved in Settings."
+    if "error code: 402" in text or "insufficient" in text or "credits" in text or "balance" in text:
+        return "Your AIML API account is out of credit. Top it up at aimlapi.com and try again."
     if "error code: 403" in text or "permission_denied" in text:
-        return "Google refused the request for this Gemini API key. Check the key and its permissions in Google AI Studio."
-    if "error code: 429" in text or "quota" in text or "resource_exhausted" in text:
-        return "Your Gemini quota or rate limit has been reached. Wait a little and try again, or check your plan in Google AI Studio."
-    if "error code: 503" in text or "high demand" in text or "unavailable" in text:
-        return "Google's AI models are overloaded right now. Wait a minute and try again."
+        return "AIML API refused the request for this key or model. Check the key and that your plan includes the selected model."
+    if "error code: 429" in text or "quota" in text or "rate limit" in text:
+        return "The AI rate limit has been reached. Wait a little and try again, or check your plan at aimlapi.com."
+    if "error code: 503" in text or "high demand" in text or "unavailable" in text or "overloaded" in text:
+        return "The AI model is overloaded right now. Wait a minute and try again."
     if "error code: 404" in text or "not found" in text and "model" in text:
-        return "The configured Gemini model is not available. Check GEMINI_MODEL on the server."
+        return "The selected AI model is not available. Choose another one in Admin > System Settings."
     if "timed out" in text or "timeout" in text or "connection" in text:
         return "The AI service could not be reached. Check the server's internet connection and try again."
     return "Quote calculation failed. Please try again; if it keeps failing, check the server log."
@@ -236,6 +242,8 @@ def create_draft_for_lead(lead: dict, user_id: str, company_id: str) -> dict:
     Never sends anything to the customer.
     """
     from app.core.encryption import decrypt_key
+    from app.core import plans
+    plans.assert_quote_allowance(company_id)
     lead_id = lead["id"]
     kb_response = supabase.table("knowledge_base").select("parsed_content").eq("company_id", company_id).execute()
     kb_contents = [item["parsed_content"] for item in kb_response.data]
@@ -261,6 +269,21 @@ def create_draft_for_lead(lead: dict, user_id: str, company_id: str) -> dict:
         fields["customer_phone"] = fields["customer_phone"] or fallback["phone"]
         if not fields["customer_name"] and fallback["name"] not in ("Customer", "WhatsApp Lead"):
             fields["customer_name"] = fallback["name"]
+
+    # A lead made for a saved customer (walk-in) uses that customer's details as typed in.
+    if lead.get("customer_id"):
+        try:
+            saved = supabase.table("customers").select("name,company,email,phone")\
+                .eq("id", lead["customer_id"]).eq("company_id", company_id).execute().data
+        except Exception as e:
+            logger.warning(f"Could not load saved customer {lead['customer_id']}: {e}")
+            saved = None
+        if saved:
+            row = saved[0]
+            fields["customer_name"] = row.get("name") or fields["customer_name"]
+            fields["customer_company"] = row.get("company") or fields.get("customer_company")
+            fields["customer_email"] = row.get("email") or fields["customer_email"]
+            fields["customer_phone"] = row.get("phone") or fields["customer_phone"]
 
     # One working draft per lead: a re-run replaces earlier unsent drafts.
     supabase.table("quotes").delete().eq("lead_id", lead_id).eq("company_id", company_id).eq("status", "draft").execute()
@@ -419,6 +442,14 @@ def update_quote(
         update_data.update(compute_totals(items, discount, tax))
         update_data.pop("discount_amount", None)
         update_data.pop("tax_amount", None)
+        # Keep the reply's quotation table in step with the edited figures.
+        from app.services.quote_text import refresh_reply
+        reply = update_data.get("email_draft", quote.get("email_draft"))
+        refreshed = refresh_reply(
+            reply, items, quote.get("currency") or "USD", discount, tax, quote.get("quote_number"),
+            update_data.get("valid_until") or quote.get("valid_until"))
+        if refreshed != reply:
+            update_data["email_draft"] = refreshed
     else:
         # Quote with no line items (legacy): honour the manually entered figures.
         if data.material_cost is not None:

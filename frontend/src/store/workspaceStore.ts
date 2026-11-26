@@ -3,11 +3,120 @@ import { supabase } from '../lib/supabase'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000'
 
+export interface AiModel {
+  id: string
+  name: string
+  developer: string
+  context_length: number | null
+}
+
+export interface AiModelsResponse {
+  active_model: string
+  fallback_models: string
+  default_model: string
+  recommended: string[]
+  models: AiModel[]
+  live: boolean
+}
+
+export type PlanId = 'starter' | 'growth' | 'scale'
+
+export const PLAN_OPTIONS: { id: PlanId; label: string; users: string; quotes: string }[] = [
+  { id: 'starter', label: 'Starter', users: '2 users', quotes: '150 AI quotes / month' },
+  { id: 'growth', label: 'Growth', users: '5 users', quotes: '500 AI quotes / month' },
+  { id: 'scale', label: 'Scale', users: 'Unlimited users', quotes: 'Unlimited quotes' },
+]
+
+export interface PlanUsage {
+  plan: PlanId
+  label: string
+  max_users: number | null
+  max_quotes_per_month: number | null
+  custom_limits: boolean
+  users: number
+  quotes_this_month: number
+}
+
 export interface AdminCompany {
   id: string
   name: string
   created_at?: string
   member_count: number
+  plan?: PlanId
+  plan_label?: string
+  max_users?: number | null
+  max_quotes_per_month?: number | null
+  custom_limits?: boolean
+  custom_max_users?: number | null
+  custom_max_quotes_per_month?: number | null
+  quotes_this_month?: number
+  status?: 'active' | 'suspended'
+  next_invoice_date?: string | null
+  setup_fee_paid?: boolean
+  billing_notes?: string | null
+  contact_email?: string | null
+  monthly_price?: number | null
+  mailbox_connected?: boolean
+  whatsapp_connected?: boolean
+  kb_files?: number
+  quotes_total?: number
+  last_activity?: string | null
+}
+
+export interface CompanyBilling {
+  status: 'active' | 'suspended'
+  next_invoice_date: string | null
+  setup_fee_paid: boolean
+  billing_notes: string | null
+  contact_email: string | null
+}
+
+export interface CompanyNotice {
+  id: string
+  kind: 'payment' | 'info' | 'warning'
+  title: string
+  body: string
+  amount: number | null
+  currency: string | null
+  due_date: string | null
+  payment_link: string | null
+  show_banner: boolean
+  resolved: boolean
+  created_at: string
+  read: boolean
+}
+
+export interface SentNotice extends Omit<CompanyNotice, 'read' | 'resolved'> {
+  company_id: string
+  company_name: string | null
+  resolved_at: string | null
+  read_count: number
+  member_count: number
+}
+
+export interface NoticeInput {
+  company_ids?: string[]
+  all_companies?: boolean
+  kind: 'payment' | 'info' | 'warning'
+  title: string
+  body: string
+  amount?: number | null
+  currency?: string | null
+  due_date?: string | null
+  payment_link?: string | null
+  show_banner: boolean
+}
+
+export interface AdminOverview {
+  companies: { total: number; active: number; suspended: number; by_plan: Record<string, number> }
+  users: { total: number; pending_approval: number }
+  estimated_mrr: number
+  quotes_this_month: { drafted: number; sent: number; won: number }
+  invoices_due: { id: string; name: string; date: string; plan: string; amount: number | null }[]
+  invoices_overdue: { id: string; name: string; date: string; plan: string; amount: number | null }[]
+  setup_fees_unpaid: { id: string; name: string }[]
+  near_limit: { id: string; name: string; plan: string; reasons: string[] }[]
+  not_set_up: { id: string; name: string; missing: string[] }[]
 }
 
 export interface Lead {
@@ -62,6 +171,7 @@ export interface Quote {
   customer_comment?: string | null
   delivery?: 'email' | 'manual' | null
   sent_to?: string | null
+  follow_up_log?: FollowUpLogEntry[]
 }
 
 export interface DispatchOptions {
@@ -86,6 +196,25 @@ export interface CustomerSummary {
   win_rate: number | null
   last_activity: string | null
   currency: string
+  // Set for customers saved by hand (walk-ins, phone enquiries).
+  id?: string | null
+  notes?: string | null
+}
+
+export interface CustomerInput {
+  name: string
+  company?: string
+  email?: string
+  phone?: string
+  notes?: string
+  request?: string
+}
+
+export interface AddCustomerResult {
+  customer: { id: string; name: string }
+  key: string
+  lead: { id: string } | null
+  updated: boolean
 }
 
 export interface CustomerHistory {
@@ -127,6 +256,46 @@ export interface AutomationSettings {
   follow_up_after_days: number
   webhook_url: string | null
   webhook_secret: string | null
+  wa_follow_up: boolean
+  wa_follow_up_after_hours: number
+  chat_nudge: boolean
+  chat_nudge_after_hours: number
+  expiry_reminder: boolean
+  expiry_reminder_days_before: number
+  team_reminders: boolean
+  team_reminder_after_days: number
+  timezone: string
+  business_hours_start: number
+  business_hours_end: number
+  business_days: string[]
+}
+
+export interface ReminderEntry {
+  quote_id: string
+  lead_id: string | null
+  quote_number: string | null
+  customer: string
+  total: number
+  currency: string
+  sent_at: string | null
+  valid_until: string | null
+  automatic_messages: number
+  days_waiting?: number
+  days_left?: number
+}
+
+export interface TeamReminders {
+  enabled: boolean
+  after_days?: number
+  waiting: ReminderEntry[]
+  expiring: ReminderEntry[]
+}
+
+export interface FollowUpLogEntry {
+  at: string
+  kind: 'quote_follow_up' | 'chat_nudge' | 'expiry_reminder'
+  channel: 'whatsapp' | 'email'
+  text: string
 }
 
 export interface QuoteAnalytics {
@@ -221,7 +390,9 @@ interface WorkspaceState {
   teamInfo: {
     company_id: string
     company_name: string
-    invite_token: string
+    invite_token: string | null
+    plan?: PlanUsage
+    seats_full?: boolean
     members: Array<{
       id: string
       name: string
@@ -273,10 +444,14 @@ interface WorkspaceState {
   acceptTeamInvite: (inviteToken: string, name?: string) => Promise<any>
   changePassword: (currentPassword: string, password: string) => Promise<void>
   automation: AutomationSettings | null
+  teamReminders: TeamReminders | null
+  fetchTeamReminders: () => Promise<void>
   customers: CustomerSummary[]
   loadingCustomers: boolean
   fetchCustomers: () => Promise<void>
   fetchCustomerHistory: (key: string) => Promise<CustomerHistory | null>
+  addCustomer: (data: CustomerInput) => Promise<AddCustomerResult>
+  deleteCustomer: (customerId: string) => Promise<void>
   uploadPartFile: (leadId: string, file: File) => Promise<void>
   mailConnection: MailConnectionStatus | null
   fetchMailConnection: () => Promise<void>
@@ -290,12 +465,19 @@ interface WorkspaceState {
   adminDeleteUser: (userId: string) => Promise<void>
   adminCompanies: AdminCompany[]
   adminListCompanies: () => Promise<AdminCompany[]>
-  adminCreateCompany: (name: string) => Promise<AdminCompany>
+  adminCreateCompany: (name: string, plan?: PlanId) => Promise<AdminCompany>
+  adminSetCompanyBilling: (companyId: string, billing: CompanyBilling) => Promise<void>
+  adminFetchOverview: () => Promise<AdminOverview>
+  adminFetchAccount: () => Promise<{ id: string; email: string }>
+  adminUpdateAccount: (data: { current_password: string; new_email?: string; new_password?: string }) => Promise<{ email: string }>
+  adminSetCompanyPlan: (companyId: string, plan: PlanId, maxUsers: number | null, maxQuotes: number | null) => Promise<{ over_user_limit: boolean; users: number; max_users: number | null }>
   adminRenameCompany: (companyId: string, name: string) => Promise<void>
   adminDeleteCompany: (companyId: string) => Promise<void>
   adminSettings: { base_labor_rate: number; base_material_markup: number } | null
   fetchAdminSettings: () => Promise<any>
   saveAdminSettings: (data: { base_labor_rate: number; base_material_markup: number }) => Promise<any>
+  fetchAiModels: (refresh?: boolean) => Promise<AiModelsResponse>
+  saveAiModel: (model: string, fallbackModels: string) => Promise<{ active_model: string; fallback_models: string }>
   fetchSystemStatus: () => Promise<any>
   fetchSystemLogs: () => Promise<any[]>
   logSystemAction: (source: string, level: string, message: string) => Promise<void>
@@ -312,7 +494,14 @@ interface WorkspaceState {
   fetchWhatsAppStatus: () => Promise<void>
   toggleTakeover: (chatId: string, statusMode: 'active_ai' | 'human_required') => Promise<void>
   exportWhatsAppLeads: () => Promise<void>
-  notifications: Array<{ id: string; title: string; description: string; type: 'email' | 'whatsapp'; created_at: string; read: boolean }>
+  notifications: Array<{ id: string; title: string; description: string; type: 'email' | 'whatsapp' | 'reminder'; created_at: string; read: boolean }>
+  companyNotices: CompanyNotice[]
+  fetchCompanyNotices: () => Promise<void>
+  markCompanyNoticesRead: (ids: string[]) => Promise<void>
+  adminSendNotice: (data: NoticeInput) => Promise<{ sent: number }>
+  adminListNotices: () => Promise<{ available: boolean; notifications: SentNotice[] }>
+  adminResolveNotice: (id: string) => Promise<void>
+  adminDeleteNotice: (id: string) => Promise<void>
   addNotification: (notification: any) => void
   markNotificationsAsRead: () => void
 }
@@ -340,6 +529,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     loadingDispatched: false,
     quoteAnalytics: null,
     automation: null,
+    teamReminders: null,
     whatsappStatus: null,
     customers: [],
     loadingCustomers: false,
@@ -363,6 +553,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     aiProcessing: false,
     error: null,
     notifications: [],
+    companyNotices: [],
 
     fetchLeads: async () => {
       set({ loadingLeads: true, error: null })
@@ -997,6 +1188,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
     },
 
+    addCustomer: async (data: CustomerInput) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/customers`, { method: 'POST', headers, body: JSON.stringify(data) })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const detail = Array.isArray(body.detail) ? 'Check the details you entered.' : body.detail
+        throw new Error(detail || 'Failed to save customer')
+      }
+      await get().fetchCustomers()
+      if (body.lead) await get().fetchLeads()
+      return body
+    },
+
+    deleteCustomer: async (customerId: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/customers/${customerId}`, { method: 'DELETE', headers })
+      if (!res.ok) throw new Error('Failed to remove customer')
+      await get().fetchCustomers()
+    },
+
     fetchCustomerHistory: async (key: string) => {
       try {
         const headers = await getAuthHeaders()
@@ -1107,6 +1318,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
     },
 
+    fetchAiModels: async (refresh = false) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/ai-models${refresh ? '?refresh=true' : ''}`, { headers })
+      if (!res.ok) throw new Error('Failed to load the AI model list')
+      return await res.json()
+    },
+
+    saveAiModel: async (model: string, fallbackModels: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/ai-model`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model, fallback_models: fallbackModels })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Failed to save the AI model')
+      return data
+    },
+
     saveAdminSettings: async (rates: { base_labor_rate: number; base_material_markup: number }) => {
       set({ error: null })
       try {
@@ -1206,10 +1436,54 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       return data
     },
 
-    adminCreateCompany: async (name: string) => {
+    adminSetCompanyPlan: async (companyId: string, plan: PlanId, maxUsers: number | null, maxQuotes: number | null) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/companies/${companyId}/plan`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ plan, max_users: maxUsers, max_quotes_per_month: maxQuotes })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Failed to save the plan')
+      await get().adminListCompanies()
+      return data
+    },
+
+    adminSetCompanyBilling: async (companyId: string, billing: CompanyBilling) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/companies/${companyId}/billing`, {
+        method: 'PUT', headers, body: JSON.stringify(billing)
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Failed to save billing details')
+      await get().adminListCompanies()
+    },
+
+    adminFetchOverview: async () => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/overview`, { headers })
+      if (!res.ok) throw new Error('Failed to load the overview')
+      return await res.json()
+    },
+
+    adminFetchAccount: async () => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/account`, { headers })
+      if (!res.ok) throw new Error('Failed to load your account')
+      return await res.json()
+    },
+
+    adminUpdateAccount: async (data) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/account`, { method: 'PUT', headers, body: JSON.stringify(data) })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Failed to update your account')
+      return body
+    },
+
+    adminCreateCompany: async (name: string, plan?: PlanId) => {
       const headers = await getAuthHeaders()
       const res = await fetch(`${BACKEND_URL}/api/admin/companies`, {
-        method: 'POST', headers, body: JSON.stringify({ name })
+        method: 'POST', headers, body: JSON.stringify({ name, plan })
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || "Failed to create company")
@@ -1280,6 +1554,77 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } catch (err) {
         console.error("Failed to post system log:", err)
       }
+    },
+
+    fetchTeamReminders: async () => {
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/automation/reminders`, { headers })
+        if (!res.ok) return
+        const data: TeamReminders = await res.json()
+        set({ teamReminders: data })
+        if (data.enabled && data.waiting.length > 0) {
+          const day = new Date().toISOString().slice(0, 10)
+          get().addNotification({
+            id: `reminder-waiting-${day}-${data.waiting.length}`,
+            type: 'reminder',
+            title: `${data.waiting.length} quote${data.waiting.length === 1 ? ' is' : 's are'} waiting on the customer`,
+            description: `No answer for ${data.after_days}+ days. Open the Dashboard to follow up.`,
+            created_at: new Date().toISOString(),
+            read: false,
+          })
+        }
+      } catch {
+        // Reminders are best-effort.
+      }
+    },
+
+    fetchCompanyNotices: async () => {
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/notifications`, { headers })
+        if (res.ok) set({ companyNotices: await res.json() })
+      } catch {
+        // Notices are best-effort; the bell keeps its last state.
+      }
+    },
+
+    markCompanyNoticesRead: async (ids: string[]) => {
+      if (!ids.length) return
+      set((state) => ({ companyNotices: state.companyNotices.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)) }))
+      try {
+        const headers = await getAuthHeaders()
+        await fetch(`${BACKEND_URL}/api/notifications/read`, { method: 'POST', headers, body: JSON.stringify({ ids }) })
+      } catch {
+        // Marked locally; the server catches up next time.
+      }
+    },
+
+    adminSendNotice: async (data: NoticeInput) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/notifications`, { method: 'POST', headers, body: JSON.stringify(data) })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Failed to send the message')
+      return body
+    },
+
+    adminListNotices: async () => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/notifications`, { headers })
+      if (!res.ok) throw new Error('Failed to load sent messages')
+      return await res.json()
+    },
+
+    adminResolveNotice: async (id: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/notifications/${id}/resolve`, { method: 'POST', headers })
+      if (!res.ok) throw new Error('Failed to resolve the message')
+    },
+
+    adminDeleteNotice: async (id: string) => {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/admin/notifications/${id}`, { method: 'DELETE', headers })
+      if (!res.ok) throw new Error('Failed to delete the message')
     },
 
     addNotification: (notification: any) => {

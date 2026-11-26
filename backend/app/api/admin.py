@@ -4,7 +4,7 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel
 from app.core.security import get_current_user, require_admin, _provision_isolated_company, DEFAULT_COMPANY_ID
 from app.core.encryption import encrypt_key
-from app.core import tenancy
+from app.core import tenancy, plans
 from supabase import create_client, Client
 from app.core.config import settings
 import logging
@@ -28,6 +28,8 @@ class UserUpdateInput(BaseModel):
     default_quote_parameters: Optional[dict] = None
     # Move the user into this existing company.
     company_id: Optional[str] = None
+    # Approve (or revoke) a self-registered account.
+    access_approved: Optional[bool] = None
 
 class UserCreateInput(BaseModel):
     email: str
@@ -39,9 +41,30 @@ class UserCreateInput(BaseModel):
     # named new_company_name (or "<name>'s Workspace").
     company_id: Optional[str] = None
     new_company_name: Optional[str] = None
+    # Plan for the new company (ignored when company_id is given).
+    plan: Optional[Literal["starter", "growth", "scale"]] = None
 
 class CompanyInput(BaseModel):
     name: str
+    plan: Optional[Literal["starter", "growth", "scale"]] = None
+
+class CompanyBillingInput(BaseModel):
+    status: Literal["active", "suspended"] = "active"
+    next_invoice_date: Optional[str] = None  # YYYY-MM-DD, or empty to clear
+    setup_fee_paid: bool = False
+    billing_notes: Optional[str] = None
+    contact_email: Optional[str] = None
+
+class AdminAccountUpdate(BaseModel):
+    current_password: str
+    new_email: Optional[str] = None
+    new_password: Optional[str] = None
+
+class CompanyPlanInput(BaseModel):
+    plan: Literal["starter", "growth", "scale"]
+    # Custom limits for this company; None uses the plan's limit.
+    max_users: Optional[int] = None
+    max_quotes_per_month: Optional[int] = None
 
 def _clean_company_name(name: str) -> str:
     clean = (name or "").strip()
@@ -60,22 +83,240 @@ def list_companies(admin: dict = Depends(require_admin)):
         counts: dict = {}
         for u in users:
             counts[u.get("company_id")] = counts.get(u.get("company_id"), 0) + 1
-        return [
-            {"id": c["id"], "name": c.get("name"), "created_at": c.get("created_at"), "member_count": counts.get(c["id"], 0)}
-            for c in companies if c["id"] != DEFAULT_COMPANY_ID
-        ]
+        health = _company_health()
+        result = []
+        for c in companies:
+            if c["id"] == DEFAULT_COMPANY_ID:
+                continue
+            plan = plans.company_plan(c["id"])
+            h = health.get(c["id"], {})
+            result.append({
+                "id": c["id"], "name": c.get("name"), "created_at": c.get("created_at"),
+                "member_count": counts.get(c["id"], 0),
+                "plan": plan["plan"], "plan_label": plan["label"],
+                "max_users": plan["max_users"], "max_quotes_per_month": plan["max_quotes_per_month"],
+                "custom_limits": plan["custom_limits"],
+                "custom_max_users": c.get("max_users"), "custom_max_quotes_per_month": c.get("max_quotes_per_month"),
+                "quotes_this_month": plans.quotes_this_month(c["id"]),
+                "status": c.get("status") or "active",
+                "next_invoice_date": c.get("next_invoice_date"),
+                "setup_fee_paid": bool(c.get("setup_fee_paid")),
+                "billing_notes": c.get("billing_notes"),
+                "contact_email": c.get("contact_email"),
+                "monthly_price": plans.PLAN_PRICES.get(plan["plan"]),
+                "mailbox_connected": h.get("mailbox", False),
+                "whatsapp_connected": h.get("whatsapp", False),
+                "kb_files": h.get("kb_files", 0),
+                "quotes_total": h.get("quotes_total", 0),
+                "last_activity": h.get("last_activity"),
+            })
+        return result
     except Exception as e:
         logger.error(f"Failed to list companies: {str(e)}")
         raise HTTPException(status_code=500, detail="Admin operation failed. Check system logs for details.")
+
+def _company_health() -> dict:
+    """Per company: mailbox / WhatsApp connected, knowledge-base files, quotes and last activity."""
+    health: dict = {}
+
+    def h(cid):
+        return health.setdefault(cid, {"mailbox": False, "whatsapp": False, "kb_files": 0, "quotes_total": 0, "last_activity": None})
+
+    def seen(cid, when):
+        if when and (h(cid)["last_activity"] or "") < str(when):
+            h(cid)["last_activity"] = str(when)
+
+    try:
+        for u in supabase.table("users").select("company_id,encrypted_gmail_email,encrypted_twilio_phone").execute().data or []:
+            if u.get("encrypted_gmail_email"):
+                h(u.get("company_id"))["mailbox"] = True
+            if u.get("encrypted_twilio_phone"):
+                h(u.get("company_id"))["whatsapp"] = True
+        try:
+            for m in supabase.table("mail_connections").select("company_id").execute().data or []:
+                h(m.get("company_id"))["mailbox"] = True
+        except Exception:
+            pass
+        for k in supabase.table("knowledge_base").select("company_id").execute().data or []:
+            h(k.get("company_id"))["kb_files"] += 1
+        for q in supabase.table("quotes").select("company_id,created_at").execute().data or []:
+            h(q.get("company_id"))["quotes_total"] += 1
+            seen(q.get("company_id"), q.get("created_at"))
+        for l in supabase.table("leads").select("company_id,created_at").execute().data or []:
+            seen(l.get("company_id"), l.get("created_at"))
+    except Exception as e:
+        logger.warning(f"Company health summary incomplete: {e}")
+    return health
+
+
+@router.put("/companies/{company_id}/billing")
+def set_company_billing(company_id: str, data: CompanyBillingInput, admin: dict = Depends(require_admin)):
+    """Account status (active / suspended) and billing details for a customer company."""
+    tenancy.require_company(company_id)
+    if company_id == DEFAULT_COMPANY_ID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The platform company has no billing.")
+    invoice_date = (data.next_invoice_date or "").strip() or None
+    if invoice_date:
+        try:
+            from datetime import date
+            date.fromisoformat(invoice_date)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Use a date like 2026-12-01.")
+    contact = (data.contact_email or "").strip().lower() or None
+    if contact and "@" not in contact:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The billing contact email doesn't look right.")
+    try:
+        supabase.table("companies").update({
+            "status": data.status,
+            "next_invoice_date": invoice_date,
+            "setup_fee_paid": data.setup_fee_paid,
+            "billing_notes": (data.billing_notes or "").strip()[:4000] or None,
+            "contact_email": contact,
+        }).eq("id", company_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to save billing for {company_id}: {e}")
+        raise HTTPException(status_code=500, detail="Could not save billing details. Run database/migration_v12_company_billing.sql and try again.")
+    logger.info(f"Admin set company {company_id} status={data.status}")
+    return {"status": "success"}
+
+
+@router.get("/overview")
+def admin_overview(admin: dict = Depends(require_admin)):
+    """Business summary for the platform owner."""
+    from datetime import date, timedelta
+    companies = [c for c in list_companies(admin) if c["id"] != DEFAULT_COMPANY_ID]
+    users = supabase.table("users").select("id,role,access_approved,company_id").execute().data or []
+    month_start = plans.month_start().isoformat()
+    quotes = supabase.table("quotes").select("company_id,status,outcome,total_cost,created_at,currency")\
+        .gte("created_at", month_start).execute().data or []
+    today = date.today()
+    soon = today + timedelta(days=7)
+
+    by_plan = {key: 0 for key in plans.PLANS}
+    for c in companies:
+        if c["status"] == "active":
+            by_plan[c["plan"]] = by_plan.get(c["plan"], 0) + 1
+    due, overdue, near_limit = [], [], []
+    for c in companies:
+        if c["status"] != "active":
+            continue
+        if c.get("next_invoice_date"):
+            d = date.fromisoformat(str(c["next_invoice_date"])[:10])
+            entry = {"id": c["id"], "name": c["name"], "date": str(d), "plan": c["plan_label"], "amount": c["monthly_price"]}
+            if d < today:
+                overdue.append(entry)
+            elif d <= soon:
+                due.append(entry)
+        reasons = []
+        if c.get("max_users") is not None and c["member_count"] >= c["max_users"]:
+            reasons.append(f"users {c['member_count']}/{c['max_users']}")
+        if c.get("max_quotes_per_month") and c["quotes_this_month"] >= 0.8 * c["max_quotes_per_month"]:
+            reasons.append(f"AI quotes {c['quotes_this_month']}/{c['max_quotes_per_month']}")
+        if reasons:
+            near_limit.append({"id": c["id"], "name": c["name"], "plan": c["plan_label"], "reasons": reasons})
+    not_set_up = [{"id": c["id"], "name": c["name"], "missing": [label for label, ok in (
+        ("price list", c["kb_files"] > 0), ("mailbox", c["mailbox_connected"]), ("WhatsApp", c["whatsapp_connected"])) if not ok]}
+        for c in companies if c["status"] == "active" and (c["kb_files"] == 0 or not c["mailbox_connected"])]
+
+    sent = [q for q in quotes if q.get("status") == "dispatched"]
+    return {
+        "companies": {"total": len(companies), "active": sum(1 for c in companies if c["status"] == "active"),
+                      "suspended": sum(1 for c in companies if c["status"] == "suspended"), "by_plan": by_plan},
+        "users": {"total": sum(1 for u in users if u.get("role") != "admin"),
+                  "pending_approval": sum(1 for u in users if u.get("role") != "admin" and u.get("access_approved") is False)},
+        "estimated_mrr": sum(plans.PLAN_PRICES.get(p, 0) * n for p, n in by_plan.items()),
+        "quotes_this_month": {"drafted": len(quotes), "sent": len(sent),
+                              "won": sum(1 for q in sent if q.get("outcome") == "accepted")},
+        "invoices_due": sorted(due, key=lambda e: e["date"]),
+        "invoices_overdue": sorted(overdue, key=lambda e: e["date"]),
+        "setup_fees_unpaid": [{"id": c["id"], "name": c["name"]} for c in companies if c["status"] == "active" and not c["setup_fee_paid"]],
+        "near_limit": near_limit,
+        "not_set_up": not_set_up,
+    }
+
+
+@router.get("/account")
+def get_admin_account(admin: dict = Depends(require_admin)):
+    return {"id": admin["id"], "email": admin.get("email")}
+
+
+@router.put("/account")
+def update_admin_account(data: AdminAccountUpdate, admin: dict = Depends(require_admin)):
+    """Changes the signed-in admin's own email and/or password. The current password is always required."""
+    new_email = (data.new_email or "").strip().lower() or None
+    new_password = data.new_password or None
+    if not new_email and not new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to change.")
+    if new_password and len(new_password) < 12:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Use at least 12 characters for the admin password.")
+    if new_email and ("@" not in new_email or "." not in new_email.split("@")[-1]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That email address doesn't look right.")
+    try:
+        verifier = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+        verified = verifier.auth.sign_in_with_password({"email": admin["email"], "password": data.current_password})
+        if not verified or not verified.user or verified.user.id != admin["id"]:
+            raise ValueError("mismatch")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Your current password is incorrect.")
+    if new_email and new_email != (admin.get("email") or "").lower():
+        taken = supabase.table("users").select("id").eq("email", new_email).execute().data or []
+        if any(u["id"] != admin["id"] for u in taken):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Another account already uses that email.")
+    attrs: dict = {}
+    if new_password:
+        attrs["password"] = new_password
+    if new_email:
+        attrs["email"] = new_email
+        attrs["email_confirm"] = True
+    try:
+        supabase.auth.admin.update_user_by_id(admin["id"], attrs)
+        if new_email:
+            supabase.table("users").update({"email": new_email}).eq("id", admin["id"]).execute()
+    except Exception as e:
+        logger.error(f"Failed to update admin account: {e}")
+        raise HTTPException(status_code=500, detail="Could not update the admin account.")
+    logger.info(f"Admin {admin['id']} updated their own {'email and password' if new_email and new_password else 'email' if new_email else 'password'}")
+    return {"status": "success", "email": new_email or admin.get("email")}
+
 
 @router.post("/companies", status_code=status.HTTP_201_CREATED)
 def create_company(data: CompanyInput, admin: dict = Depends(require_admin)):
     name = _clean_company_name(data.name)
     if tenancy.company_name_taken(name):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f'A company named "{name}" already exists.')
-    res = supabase.table("companies").insert({"name": name}).execute()
+    row = {"name": name}
+    if data.plan:
+        row["plan"] = data.plan
+    res = supabase.table("companies").insert(row).execute()
     logger.info(f"Admin created company {name}")
     return res.data[0]
+
+
+@router.get("/plans")
+def list_plans(admin: dict = Depends(require_admin)):
+    return [{"id": key, **value} for key, value in plans.PLANS.items()]
+
+
+@router.put("/companies/{company_id}/plan")
+def set_company_plan(company_id: str, data: CompanyPlanInput, admin: dict = Depends(require_admin)):
+    """Sets a company's plan and optional custom limits. Existing users are never removed."""
+    tenancy.require_company(company_id)
+    if company_id == DEFAULT_COMPANY_ID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The platform company has no plan.")
+    if data.max_users is not None and data.max_users < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A company needs at least 1 user.")
+    if data.max_quotes_per_month is not None and data.max_quotes_per_month < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The quote limit can't be negative.")
+    try:
+        supabase.table("companies").update({
+            "plan": data.plan, "max_users": data.max_users, "max_quotes_per_month": data.max_quotes_per_month,
+        }).eq("id", company_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to set plan for {company_id}: {e}")
+        raise HTTPException(status_code=500, detail="Could not save the plan. Run database/migration_v11_plans.sql and try again.")
+    usage = plans.usage(company_id)
+    over = usage["max_users"] is not None and usage["users"] > usage["max_users"]
+    return {"status": "success", **usage, "over_user_limit": over}
 
 @router.put("/companies/{company_id}")
 def rename_company(company_id: str, data: CompanyInput, admin: dict = Depends(require_admin)):
@@ -147,8 +388,10 @@ def list_users(admin: dict = Depends(require_admin)):
                 "name": profile.get("name"),
                 "phone_number": profile.get("phone_number"),
                 "role": profile.get("role", "user"),
+                "access_approved": profile.get("role") == "admin" or profile.get("access_approved", True) is not False,
                 "company_id": profile.get("company_id"),
-                "company_name": company_names.get(profile.get("company_id")) if profile.get("company_id") != DEFAULT_COMPANY_ID else None,
+                "company_name": ("Platform admin" if profile.get("role") == "admin"
+                                 else company_names.get(profile.get("company_id")) if profile.get("company_id") != DEFAULT_COMPANY_ID else None),
                 "created_at": auth_user.created_at,
                 "last_sign_in_at": auth_user.last_sign_in_at,
                 "has_gemini_key": bool(profile.get("encrypted_gemini_key")),
@@ -197,8 +440,11 @@ def create_new_user(
 
     target_company_id = (data.company_id or "").strip() or None
     new_company_name = (data.new_company_name or "").strip() or None
-    if target_company_id:
+    if data.role == "admin":
+        target_company_id, new_company_name = DEFAULT_COMPANY_ID, None  # admins belong to no customer company
+    elif target_company_id:
         tenancy.require_company(target_company_id)
+        plans.assert_seat_available(target_company_id)
     elif new_company_name and tenancy.company_name_taken(new_company_name):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -242,6 +488,11 @@ def create_new_user(
                 user_id, email=clean_email,
                 preferred_name=new_company_name or (f"{data.name}'s Workspace" if data.name else None)
             )
+        if not target_company_id and data.plan:
+            try:
+                supabase.table("companies").update({"plan": data.plan}).eq("id", comp_id).execute()
+            except Exception as e:  # column missing before migration v11
+                logger.warning(f"Could not set plan for new company {comp_id}: {e}")
         company_name = (tenancy.get_company(comp_id) or {}).get("name")
         
         # Upsert public profile
@@ -255,6 +506,11 @@ def create_new_user(
             "default_quote_parameters": {"company_name": company_name} if company_name else {}
         }, on_conflict="id").execute()
         
+        try:
+            supabase.table("users").update({"access_approved": True}).eq("id", user_id).execute()
+        except Exception as e:  # column missing before migration v9
+            logger.warning(f"Could not mark {clean_email} as approved: {e}")
+
         logger.info(f"Admin created new user: {clean_email}")
         return {"status": "success", "user_id": user_id, "company_id": comp_id}
     except HTTPException:
@@ -279,14 +535,33 @@ def update_user_profile(
     Allows admin to modify user details, encrypt credentials, and reset passwords.
     """
     try:
-        current = supabase.table("users").select("company_id").eq("id", user_id).execute()
+        current = supabase.table("users").select("company_id,role").eq("id", user_id).execute()
         if not current.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        current_role = current.data[0].get("role") or "user"
+        new_role = data.role or current_role
+        if user_id == admin["id"] and new_role != "admin":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You can't remove your own admin role.")
+        if user_id == admin["id"] and data.access_approved is False:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You can't revoke your own access.")
+        if new_role == "admin":
+            # Admins belong to no customer company.
+            if (data.company_id or "").strip() not in ("", DEFAULT_COMPANY_ID):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admins can't be put in a customer company.")
+            data.company_id = None
+        elif current_role == "admin" and not (data.company_id or "").strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose the company this user should join when removing admin rights.")
         target_company_id = (data.company_id or "").strip() or current.data[0].get("company_id") or DEFAULT_COMPANY_ID
+        if new_role == "admin":
+            target_company_id = DEFAULT_COMPANY_ID
 
         # Refuse before writing anything if the mailbox / number belongs to another company.
         tenancy.assert_no_credential_clash(user_id, target_company_id, data.gmail_email, data.twilio_phone)
-        if target_company_id != current.data[0].get("company_id"):
+        if new_role == "admin" and current.data[0].get("company_id") != DEFAULT_COMPANY_ID:
+            # Promoted: leave the customer company; its records stay with it.
+            supabase.table("users").update({"company_id": DEFAULT_COMPANY_ID}).eq("id", user_id).execute()
+        elif target_company_id != current.data[0].get("company_id"):
+            plans.assert_seat_available(target_company_id, joining_user_id=user_id)
             tenancy.move_user_to_company(user_id, target_company_id)
 
         # 1. Update Auth settings (password) if provided
@@ -307,6 +582,8 @@ def update_user_profile(
             update_data["role"] = data.role
         if data.default_quote_parameters is not None:
             update_data["default_quote_parameters"] = data.default_quote_parameters
+        if data.access_approved is not None:
+            update_data["access_approved"] = data.access_approved
 
         # Encrypt credential strings if provided
         if data.gemini_key is not None:
@@ -336,8 +613,10 @@ def update_user_profile(
 @router.delete("/users/{user_id}")
 def delete_user(user_id: str, admin: dict = Depends(require_admin)):
     """
-    Deletes a user account.
+    Deletes a user account. You can't delete your own admin account.
     """
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You can't delete your own admin account.")
     try:
         supabase.auth.admin.delete_user(user_id)
         logger.info(f"Admin deleted user {user_id}")
@@ -475,9 +754,53 @@ def update_settings(
     admin: dict = Depends(require_admin)
 ):
     settings_data = {
+        **load_global_settings(),  # keep other stored keys, e.g. the AI model
         "base_labor_rate": base_labor_rate,
         "base_material_markup": base_material_markup
     }
     if save_global_settings(settings_data):
         return {"status": "success", "settings": settings_data}
     raise HTTPException(status_code=500, detail="Failed to save settings")
+
+
+@router.get("/ai-models")
+def get_ai_models(refresh: bool = Query(False), admin: dict = Depends(require_admin)):
+    """The AI provider's chat models, the recommended shortlist and the active model."""
+    from app.services import ai_provider
+    models, live = ai_provider.list_chat_models(force_refresh=refresh)
+    available = {m["id"] for m in models}
+    stored = load_global_settings()
+    return {
+        "active_model": ai_provider.active_model(),
+        "fallback_models": stored.get("ai_fallback_models") if isinstance(stored.get("ai_fallback_models"), str) else settings.AI_FALLBACK_MODELS,
+        "default_model": settings.AI_MODEL,
+        "recommended": [m for m in ai_provider.RECOMMENDED_MODELS if not live or m in available],
+        "models": models,
+        "live": live,
+    }
+
+
+class AIModelUpdate(BaseModel):
+    model: str
+    fallback_models: Optional[str] = None
+
+
+@router.post("/ai-model")
+def set_ai_model(data: AIModelUpdate, admin: dict = Depends(require_admin)):
+    from app.services import ai_provider
+    model = data.model.strip()
+    fallbacks = [m.strip() for m in (data.fallback_models or "").split(",") if m.strip()]
+    if not model or len(model) > 200:
+        raise HTTPException(status_code=400, detail="Choose a model.")
+    models, live = ai_provider.list_chat_models()
+    if live:
+        available = {m["id"] for m in models}
+        unknown = [m for m in [model] + fallbacks if m not in available]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Not a chat model offered by the AI provider: {', '.join(unknown)}")
+    settings_data = {**load_global_settings(), "ai_model": model}
+    if data.fallback_models is not None:
+        settings_data["ai_fallback_models"] = ",".join(fallbacks)
+    if not save_global_settings(settings_data):
+        raise HTTPException(status_code=500, detail="Could not save the model. Run database/migration_v4.sql (app_settings table) and try again.")
+    return {"status": "success", "active_model": model, "fallback_models": settings_data.get("ai_fallback_models", settings.AI_FALLBACK_MODELS)}

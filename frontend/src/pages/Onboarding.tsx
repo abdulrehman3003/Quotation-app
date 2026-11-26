@@ -492,12 +492,12 @@ export const Onboarding: React.FC = () => {
                 </span>
               </div>
 
-              {/* Gemini API Key */}
+              {/* AIML API key */}
               <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/80 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold uppercase tracking-wide text-indigo-400 flex items-center gap-1.5">
                     <Key className="w-3.5 h-3.5" />
-                    Google Gemini AI Engine Key
+                    AIML API key (optional)
                   </span>
                   {userProfile?.has_gemini_key && (
                     <span className="text-[11px] text-emerald-400 font-semibold">Already Configured</span>
@@ -507,7 +507,7 @@ export const Onboarding: React.FC = () => {
                   type="password"
                   value={geminiKey}
                   onChange={(e) => setGeminiKey(e.target.value)}
-                  placeholder={userProfile?.has_gemini_key ? '•••••••••••• (Leave blank to keep existing key)' : 'AIzaSy... (Leave blank to use server default if configured)'}
+                  placeholder={userProfile?.has_gemini_key ? '•••••••••••• (Leave blank to keep existing key)' : 'Leave blank to use the server key'}
                   className="w-full bg-slate-900 border border-slate-800 focus:border-brand-500 rounded-lg px-3.5 py-2 text-xs text-slate-100 outline-none font-mono"
                 />
               </div>

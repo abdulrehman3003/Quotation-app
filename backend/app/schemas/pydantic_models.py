@@ -78,6 +78,9 @@ class QuoteResponse(BaseModel):
     outcome_source: Optional[str] = None
     responded_at: Optional[datetime] = None
     customer_comment: Optional[str] = None
+    follow_up_sent_at: Optional[datetime] = None
+    # Automatic messages sent for this quote: [{at, kind, channel, text}] (migration v15).
+    follow_up_log: List[dict] = Field(default_factory=list)
     # Set on the dispatch response only.
     delivery: Optional[str] = None
     sent_to: Optional[str] = None

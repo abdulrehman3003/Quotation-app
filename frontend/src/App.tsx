@@ -17,6 +17,7 @@ import AdminPanel from './pages/AdminPanel'
 import { PublicQuote } from './pages/PublicQuote'
 import { Customers } from './pages/Customers'
 import { Sidebar } from './components/Sidebar'
+import { NoticeBanner, NoticeCard } from './components/CompanyNotices'
 import { Lock, LogIn } from 'lucide-react'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000'
@@ -102,9 +103,69 @@ const AdminLogin: React.FC<{ initialError?: string }> = ({ initialError }) => {
   )
 }
 
+// Shown to a signed-in account that an admin has not approved (open sign-up is closed).
+const PendingApproval: React.FC = () => {
+  const { signOut } = useAuthStore()
+  return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+      <div className="max-w-md w-full rounded-lg border border-slate-800 bg-slate-900/40 p-8 text-center">
+        <div className="mx-auto mb-4 w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center">
+          <Lock className="h-5 w-5 text-slate-300" />
+        </div>
+        <h1 className="text-lg font-semibold text-white">Your account is waiting for approval</h1>
+        <p className="mt-3 text-sm text-slate-400 leading-relaxed">
+          AXRFLOWS workspaces are set up for each business by our team. We will let you know when yours is ready.
+          If you were invited by a colleague, open the invite link they sent you.
+        </p>
+        <button
+          onClick={() => signOut()}
+          className="mt-6 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition-colors cursor-pointer"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Shown to users of a company the admin has suspended (e.g. unpaid invoice).
+const WorkspaceSuspended: React.FC = () => {
+  const { signOut } = useAuthStore()
+  const { companyNotices, fetchCompanyNotices } = useWorkspaceStore()
+  useEffect(() => {
+    fetchCompanyNotices()
+  }, [fetchCompanyNotices])
+  const due = companyNotices.filter((n) => n.kind === 'payment' && !n.resolved)
+  return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+      <div className="max-w-md w-full rounded-lg border border-slate-800 bg-slate-900/40 p-8 text-center">
+        <div className="mx-auto mb-4 w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center">
+          <Lock className="h-5 w-5 text-slate-300" />
+        </div>
+        <h1 className="text-lg font-semibold text-white">This workspace is paused</h1>
+        <p className="mt-3 text-sm text-slate-400 leading-relaxed">
+          Your company's AXRFLOWS access is on hold. Please contact AXRFLOWS to restore it. Your data is kept safe in the meantime.
+        </p>
+        {due.length > 0 && (
+          <div className="mt-6 space-y-3 text-left rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+            {due.map((n) => <NoticeCard key={n.id} notice={n} />)}
+          </div>
+        )}
+        <button
+          onClick={() => signOut()}
+          className="mt-6 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition-colors cursor-pointer"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // Protected Onboarding Route Wrapper
 const ProtectedOnboarding: React.FC = () => {
   const { session, loading } = useAuthStore()
+  const { userProfile } = useWorkspaceStore()
 
   if (loading) {
     return (
@@ -116,6 +177,10 @@ const ProtectedOnboarding: React.FC = () => {
 
   if (!session) {
     return <Navigate to="/auth" replace />
+  }
+
+  if (userProfile && userProfile.access_approved === false) {
+    return <PendingApproval />
   }
 
   return <Onboarding />
@@ -160,6 +225,19 @@ const ProtectedLayout: React.FC = () => {
     return <Navigate to="/auth" replace />
   }
 
+  if (userProfile && userProfile.access_approved === false) {
+    return <PendingApproval />
+  }
+
+  if (userProfile && userProfile.workspace_suspended) {
+    return <WorkspaceSuspended />
+  }
+
+  // The admin belongs to no customer company: their home is the admin panel.
+  if (userProfile && userProfile.role === 'admin') {
+    return <Navigate to="/admin" replace />
+  }
+
   // Redirect un-onboarded regular users to the Onboarding Wizard
   if (userProfile && !userProfile.onboarding_completed && userProfile.role !== 'admin') {
     return <Navigate to="/onboarding" replace />
@@ -169,6 +247,7 @@ const ProtectedLayout: React.FC = () => {
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
       <Sidebar />
       <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+        <NoticeBanner />
         <Outlet />
       </main>
     </div>
@@ -225,34 +304,10 @@ const AdminPortal: React.FC = () => {
     return <AdminLogin initialError={denyReason} />
   }
 
+  // The admin panel draws its own left sidebar (navigation and sign-out).
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
-      <div className="w-64 h-screen bg-slate-900 border-r border-slate-800 flex flex-col justify-between p-6">
-        <div>
-          <div className="flex items-center gap-3 pb-6 border-b border-slate-800 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
-              <span className="text-white font-semibold text-lg">A</span>
-            </div>
-            <span className="text-xl font-semibold text-white">ADMIN APP</span>
-          </div>
-          <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-2">System Controls</p>
-          <div className="text-sm font-semibold text-slate-300 bg-indigo-500/10 border border-indigo-500/20 px-3 py-2 rounded-lg">
-            Active Control Room
-          </div>
-        </div>
-
-        <button
-          onClick={async () => {
-            await supabase.auth.signOut()
-          }}
-          className="w-full py-2 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold cursor-pointer transition-colors"
-        >
-          Logout Admin
-        </button>
-      </div>
-      <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
-        <AdminPanel />
-      </main>
+    <div className="h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+      <AdminPanel />
     </div>
   )
 }

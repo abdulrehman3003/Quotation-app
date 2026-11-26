@@ -13,7 +13,7 @@ Follows section 6 of `2026-11-15_competitive_assessment.md`. Prices are judgemen
 - Growth is the plan the business is built around ($500 setup, about $100/month), and it is the one to sell.
 - Founding offer: setup fee waived for the first three customers in exchange for a case study, matching the pilot plan in the 2026-11-15 assessment.
 - Meta's WhatsApp conversation fees are passed on at cost.
-- **Plan limits (users, quotes a month) are not enforced in the app.** They are fair-use terms in the contract for now. Enforce them in code once there are more than a handful of customers.
+- **Plan limits are enforced** (from migration v11): users per company (Starter 2, Growth 5, Scale unlimited) and AI-drafted quotes per calendar month (150 / 500 / unlimited). An admin sets each company's plan, and optional custom limits, in Admin → Companies. Feature differences between plans (e.g. WhatsApp only on Growth) are not enforced in code.
 - The Scale "Talk to us" button emails `SALES_EMAIL` in `LandingPage.tsx`, currently `sales@axrflows.com`. Replace it with a real inbox.
 
 ## 2. Payment collection decision
@@ -47,3 +47,16 @@ Reasons:
 6. Self-serve sign-up drops the visitor into an empty workspace with integrations to configure, while the offer is "we set it up for you". The main call to action should be "Book a 20-minute demo".
 7. Operational gaps: missing migrations on the database, the temporary admin, unrotated secrets, untested Google/Microsoft sign-in.
 8. Prompts and examples are written for metal fabrication. Pick one trade and one region (assessment §6) and tailor the copy, examples and demo data to it.
+
+## 5. First market (decided 2026-11-26)
+
+**Metal, aluminium and glass fabrication workshops in the UAE**, then Saudi Arabia. The landing page copy is now written for this buyer, and every main button books a demo instead of opening sign-up.
+
+Why this one:
+- Business runs on WhatsApp, and quotes are requested there. That's the strongest feature.
+- Construction and fit-out spending is high, jobs are worth thousands of dollars, and owners already pay for software in USD. The AED is pegged to the dollar, so a USD price causes no confusion.
+- English is the working language for trade, so the English-only interface is not a blocker. Arabic replies are not claimed on the page.
+- The AI prompts were already written for metal fabrication, so the product needs no changes for this trade.
+- Quote currency is set per company, so quotes go out in AED and VAT is set at 5%.
+
+Demo buttons use `SALES_WHATSAPP` (wa.me link) or else `SALES_EMAIL`, both constants at the top of `frontend/src/pages/LandingPage.tsx`.

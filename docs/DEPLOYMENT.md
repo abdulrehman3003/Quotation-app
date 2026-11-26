@@ -10,7 +10,7 @@ customers ──► app.<your-domain>   (frontend, static, e.g. Vercel)
                     │
         ┌───────────┼──────────────┬───────────────┐
         ▼           ▼              ▼               ▼
-     Supabase    Gemini API   Mail (IMAP/SMTP)   Twilio WhatsApp
+     Supabase    AIML API     Mail (IMAP/SMTP)   Twilio WhatsApp
 ```
 
 Allow about half a day for the first deployment. Steps 1 to 3 are one-off.
@@ -21,10 +21,10 @@ Allow about half a day for the first deployment. Steps 1 to 3 are one-off.
 
 Do these first. They are listed in `PROJECT_NOTES.md` §12.
 
-1. **Rotate every secret that was ever committed.** `backend/.env` and `frontend/.env` were in git history (commit `358213f`). In Supabase, generate a new JWT secret and service-role key. Also regenerate the Gemini API key, the Gmail app password and the Twilio auth token.
+1. **Rotate every secret that was ever committed.** `backend/.env` and `frontend/.env` were in git history (commit `358213f`). In Supabase, generate a new JWT secret and service-role key. Also regenerate the AIML API key, the Gmail app password and the Twilio auth token.
    - Rotating the JWT secret signs every user out. That is expected.
    - If `ENCRYPTION_KEY` is **not** set, stored mailbox and Twilio credentials are encrypted with a key derived from the JWT secret, so rotating the secret makes them unreadable. Set `ENCRYPTION_KEY` (step 4) **before** rotating, or have users reconnect their mailbox afterwards.
-2. **Delete the temporary admin `admin@admin.com`** (Supabase → Authentication → Users). Create your real admin with a strong password, then set `role = 'admin'` on its row in `public.users`. With `ENV=production`, the backend refuses to start while the temporary admin exists.
+2. **Delete the temporary admin `admin@admin.com`** (done 2026-11-26: the admin is now `axrflows@gmail.com`; set a strong password in Admin → My Account) (Supabase → Authentication → Users). Create your real admin with a strong password, then set `role = 'admin'` on its row in `public.users`. With `ENV=production`, the backend refuses to start while the temporary admin exists.
 3. Ideally, use a **separate Supabase project for production** rather than the development one.
 
 ## 2. Database (Supabase)
@@ -42,10 +42,19 @@ Open the Supabase SQL editor and run the files in `database/` in this order:
 | 6 | `migration_v6_quote_lifecycle.sql` | Quote numbers, public tokens, outcomes |
 | 7 | `migration_v7_automation.sql` | `company_settings`, follow-ups |
 | 8 | `migration_v8_mail_oauth.sql` | `mail_connections` for Google / Microsoft sign-in |
+| 9 | `migration_v9_access_approval.sql` | Closes open sign-up: new accounts need admin approval. Needs v4 (`app_settings`) first |
+| 10 | `migration_v10_walk_in_customers.sql` | `customers` table for walk-in / phone customers added by hand; `leads.customer_id` |
+| 11 | `migration_v11_plans.sql` | Plan per company (Starter / Growth / Scale) with optional custom limits; sign-up no longer trusts a browser-sent `company_id` |
+| 12 | `migration_v12_company_billing.sql` | Company status (active / suspended), next invoice date, setup fee paid, billing notes and contact |
+| 13 | `migration_v13_company_notifications.sql` | Messages from the admin to companies (payment reminders, notices) and per-user read receipts |
+| 14 | `migration_v14_whatsapp_customer_name.sql` | `whatsapp_chats.name_confirmed`: the assistant asks for the customer's name |
+| 15 | `migration_v15_follow_ups.sql` | Automatic WhatsApp follow-ups, expiry reminders, STOP opt-out, follow-up log on quotes |
 
-v4 and v8 use `if not exists` and are safe to re-run.
+v4 and v8 to v15 are safe to re-run. v9 approves every account that exists when it first runs, so run it before sharing the site publicly.
 
 > **Current development database (checked 2026-11-26):** `app_settings` (v4) and `mail_connections` (v8) are missing. Run `migration_v4.sql` and `migration_v8_mail_oauth.sql` there.
+
+**Access control.** The login page only shows *Register* on a team invite link, and the backend refuses any account an admin hasn't approved. Supabase's own sign-up stays switched on, because invite links rely on it. A stranger who signs up directly against Supabase gets a login that can't do anything, and appears as *PENDING* in Admin → Users. To cut down on spam accounts, turn on **Confirm email** and CAPTCHA protection in Supabase Authentication settings.
 
 Then, in **Authentication → URL Configuration**:
 - **Site URL:** `https://app.<your-domain>`
@@ -90,10 +99,10 @@ SUPABASE_JWT_SECRET=<rotated>
 # 32+ random characters. Set once and never change it, or stored credentials become unreadable.
 ENCRYPTION_KEY=<python -c "import secrets; print(secrets.token_urlsafe(48))">
 
-GEMINI_API_KEY=<rotated>
-GEMINI_MODEL=gemini-3.8-flash
-GEMINI_FALLBACK_MODELS=gemini-3.5-flash,gemini-flash-latest
-GEMINI_REASONING_EFFORT=low
+AI_API_KEY=<AIML API key>
+AI_MODEL=openai/gpt-4o-mini          # default; admins can switch models in the admin panel
+AI_FALLBACK_MODELS=openai/gpt-4.1-mini
+AI_REASONING_EFFORT=                 # only for reasoning models (o-series, gpt-5)
 
 FRONTEND_URL=https://app.<your-domain>
 PUBLIC_BACKEND_URL=https://api.<your-domain>
@@ -153,7 +162,8 @@ For each customer: a Twilio WhatsApp sender (approved through Meta Business), wi
 
 - [ ] Secrets rotated; `ENCRYPTION_KEY` set
 - [ ] `admin@admin.com` deleted; real admin created
-- [ ] All migrations applied; `app_settings` and `mail_connections` exist
+- [ ] All migrations applied; `app_settings`, `mail_connections` and `users.access_approved` exist
+- [ ] Sign-up is closed: a brand-new account sees "waiting for approval", and is approved from Admin → Users
 - [ ] `ENV=production`; backend starts; `GET https://api.<domain>/health` returns `healthy`
 - [ ] Frontend loads at `https://app.<domain>`; sign-up confirmation email arrives; login works
 - [ ] Knowledge-base upload works (storage bucket and policies)

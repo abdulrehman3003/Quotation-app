@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
-from app.core.security import get_current_user, DEFAULT_COMPANY_ID, _provision_isolated_company
+from app.core.security import get_current_user, get_signed_in_user, DEFAULT_COMPANY_ID, _provision_isolated_company
 from app.core.encryption import encrypt_key, decrypt_key
 from app.core import tenancy
 from supabase import create_client, Client
@@ -103,6 +103,9 @@ def _upsert_company_name(user_id: str, current_company_id: str | None, email: st
     clean_name = company_name.strip()
     if not clean_name:
         return current_company_id or DEFAULT_COMPANY_ID
+    role_res = supabase.table("users").select("role").eq("id", user_id).execute()
+    if role_res.data and role_res.data[0].get("role") == "admin":
+        return current_company_id or DEFAULT_COMPANY_ID  # never give the platform admin a customer company
 
     if not current_company_id or current_company_id == DEFAULT_COMPANY_ID:
         return _provision_isolated_company(user_id, email=email, preferred_name=clean_name)
@@ -152,11 +155,35 @@ def _serialize_profile(profile: dict) -> dict:
         "has_twilio_sid": bool(profile.get("encrypted_twilio_sid")),
         "has_twilio_token": bool(profile.get("encrypted_twilio_token")),
         "has_twilio_phone": bool(profile.get("encrypted_twilio_phone")),
+        # Missing column (before migration v9) means approved, matching the backend gate.
+        "access_approved": role == "admin" or profile.get("access_approved", True) is not False,
     }
 
 
+def _drop_empty_workspace(company_id: str | None, keep: str) -> None:
+    """Sign-up creates a personal workspace; once its only user joins a team it is left empty."""
+    if not company_id or company_id in (keep, DEFAULT_COMPANY_ID):
+        return
+    try:
+        if supabase.table("users").select("id").eq("company_id", company_id).execute().data:
+            return
+        for table in ("leads", "quotes", "knowledge_base"):
+            if supabase.table(table).select("id").eq("company_id", company_id).limit(1).execute().data:
+                return
+        supabase.table("companies").delete().eq("id", company_id).execute()
+    except Exception as e:
+        logger.warning(f"Could not remove empty workspace {company_id}: {e}")
+
+
+def _approve_access(user_id: str) -> None:
+    try:
+        supabase.table("users").update({"access_approved": True}).eq("id", user_id).execute()
+    except Exception as e:  # column missing before migration v9: everyone is approved anyway
+        logger.warning(f"Could not mark {user_id} as approved: {e}")
+
+
 @router.get("/profile")
-def get_profile(current_user: dict = Depends(get_current_user)):
+def get_profile(current_user: dict = Depends(get_signed_in_user)):
     """
     Retrieves the profile information for the currently authenticated user.
     Uses upsert if the public.users row is missing to prevent duplicate email/key errors.
@@ -176,7 +203,7 @@ def get_profile(current_user: dict = Depends(get_current_user)):
             res = supabase.table("users").select("*").eq("id", current_user["id"]).execute()
 
         profile = res.data[0]
-        return _serialize_profile(profile)
+        return {**_serialize_profile(profile), "workspace_suspended": bool(current_user.get("workspace_suspended"))}
     except Exception as e:
         logger.error(f"Failed to fetch profile: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to load profile details")
@@ -188,6 +215,9 @@ def get_company_team(current_user: dict = Depends(get_current_user)):
     Returns all team members belonging to the authenticated user's company
     along with a signed shareable invite token for inviting teammates.
     """
+    if current_user.get("role") == "admin":
+        # The platform admin belongs to no customer company, so has no team or invite link.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The admin account has no team. Manage users in the admin panel.")
     try:
         company_id = current_user.get("company_id") or DEFAULT_COMPANY_ID
         if company_id == DEFAULT_COMPANY_ID:
@@ -224,11 +254,17 @@ def get_company_team(current_user: dict = Depends(get_current_user)):
                 "created_at": m.get("created_at")
             })
 
+        from app.core import plans
+        plan = plans.company_plan(company_id)
+        seats_full = plan["max_users"] is not None and len(members) >= plan["max_users"]
         return {
             "company_id": company_id,
             "company_name": company_name,
-            "invite_token": invite_token,
-            "members": members
+            # No link to share once the plan's user limit is reached.
+            "invite_token": None if seats_full else invite_token,
+            "members": members,
+            "plan": {**plan, "users": len(members), "quotes_this_month": plans.quotes_this_month(company_id)},
+            "seats_full": seats_full,
         }
     except Exception as e:
         logger.error(f"Failed to fetch company team for user {current_user['id']}: {str(e)}")
@@ -254,7 +290,7 @@ def verify_invite_token_info(token: str = Query(..., description="Signed team in
 @router.post("/team/accept-invite")
 def accept_team_invite(
     data: AcceptInviteInput,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_signed_in_user)
 ):
     """
     Attaches the currently authenticated user to the company specified in the signed
@@ -287,6 +323,9 @@ def accept_team_invite(
 
         # The joiner's own mailbox / WhatsApp number must not belong to a third company.
         tenancy.assert_user_can_join(current_user["id"], target_company_id)
+        from app.core import plans
+        plans.assert_seat_available(target_company_id, joining_user_id=current_user["id"])
+        previous_company_id = current_user.get("company_id")
 
         existing_res = supabase.table("users").select("*").eq("id", current_user["id"]).execute()
         existing = existing_res.data[0] if existing_res.data else {}
@@ -308,6 +347,8 @@ def accept_team_invite(
             supabase.table("users").update(update_data).eq("id", current_user["id"]).execute()
 
         refreshed = supabase.table("users").select("*").eq("id", current_user["id"]).execute()
+        _approve_access(current_user["id"])  # invited by an approved teammate
+        _drop_empty_workspace(previous_company_id, keep=target_company_id)
         return {
             "status": "success",
             "company_id": target_company_id,

@@ -15,6 +15,7 @@ import {
   Users,
   type LucideIcon
 } from 'lucide-react'
+import { NoticeCard } from './CompanyNotices'
 
 // PII masking utility for email rendering in the UI
 const maskEmail = (email: string | undefined): string => {
@@ -50,7 +51,11 @@ export const Sidebar: React.FC = () => {
     notifications,
     markNotificationsAsRead,
     fetchEmails,
-    fetchChats
+    fetchChats,
+    companyNotices,
+    fetchCompanyNotices,
+    markCompanyNoticesRead,
+    fetchTeamReminders
   } = useWorkspaceStore()
 
   const [showNotifications, setShowNotifications] = useState(false)
@@ -66,6 +71,14 @@ export const Sidebar: React.FC = () => {
     }, 12000)
     return () => clearInterval(interval)
   }, [fetchEmails, fetchChats])
+
+  // Messages from AXRFLOWS (payment reminders, notices)
+  useEffect(() => {
+    fetchCompanyNotices()
+    fetchTeamReminders()
+    const interval = setInterval(() => { fetchCompanyNotices(); fetchTeamReminders() }, 60000)
+    return () => clearInterval(interval)
+  }, [fetchCompanyNotices, fetchTeamReminders])
 
   // Close the notification popover on outside click or Escape
   useEffect(() => {
@@ -86,7 +99,8 @@ export const Sidebar: React.FC = () => {
     }
   }, [showNotifications])
 
-  const unreadNotifications = notifications.filter((n) => !n.read).length
+  const unreadNotices = companyNotices.filter((n) => !n.read)
+  const unreadNotifications = notifications.filter((n) => !n.read).length + unreadNotices.length
   const unreadEmails = emails.filter((e) => e.status === 'unread').length
   const escalatedChats = whatsappChats.filter((c) => c.status === 'human_required').length
 
@@ -130,7 +144,10 @@ export const Sidebar: React.FC = () => {
         <div className="relative" ref={popoverRef}>
           <button
             onClick={() => {
-              if (!showNotifications) markNotificationsAsRead()
+              if (!showNotifications) {
+                markNotificationsAsRead()
+                markCompanyNoticesRead(unreadNotices.map((n) => n.id))
+              }
               setShowNotifications(!showNotifications)
             }}
             className="relative inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors cursor-pointer"
@@ -149,15 +166,21 @@ export const Sidebar: React.FC = () => {
                 <p className="text-sm font-semibold text-slate-100">Notifications</p>
               </div>
               <div className="max-h-80 overflow-y-auto py-1">
-                {notifications.length === 0 ? (
+                {companyNotices.slice(0, 10).map((n) => (
+                  <div key={n.id} className={`px-4 py-2.5 border-b border-slate-800/60 ${n.read ? '' : 'bg-slate-800/40'}`}>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">From AXRFLOWS · {new Date(n.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>
+                    <NoticeCard notice={n} compact />
+                  </div>
+                ))}
+                {notifications.length === 0 && companyNotices.length === 0 ? (
                   <p className="px-4 py-8 text-center text-xs text-slate-500">You're all caught up.</p>
-                ) : (
+                ) : notifications.length === 0 ? null : (
                   notifications.map((n) => (
                     <button
                       key={n.id}
                       onClick={() => {
                         setShowNotifications(false)
-                        navigate(n.type === 'email' ? '/emails' : '/whatsapp')
+                        navigate(n.type === 'email' ? '/emails' : n.type === 'reminder' ? '/dashboard' : '/whatsapp')
                       }}
                       className="w-full text-left px-4 py-2.5 flex gap-3 hover:bg-slate-850 transition-colors cursor-pointer"
                     >

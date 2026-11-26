@@ -5,7 +5,8 @@ import re
 import time
 from openai import OpenAI
 from app.core.config import settings
-from app.core.credentials import get_gemini_api_key
+from app.core.credentials import get_ai_api_key
+from app.services import ai_provider
 from app.schemas.pydantic_models import QuoteEngineOutput, ItemizedCost
 from app.services.pricing import normalize_items, compute_totals, money
 from app.services.kb_retrieval import select_kb_context
@@ -40,7 +41,6 @@ def finalize_engine_output(parsed: QuoteEngineOutput) -> QuoteEngineOutput:
     Makes model output safe to store: recomputes every figure from the line
     items, and records anything a human should check before sending.
     """
-    stated_total = money(parsed.total_cost)
     items = normalize_items(parsed.itemized_breakdown)
     totals = compute_totals(items)
 
@@ -54,12 +54,8 @@ def finalize_engine_output(parsed: QuoteEngineOutput) -> QuoteEngineOutput:
             notes.append(f"Estimated from a range or rule in your knowledge base, confirm the price: {item['description']}.")
     if not items:
         notes.append("The AI could not identify any priced items in this request.")
-    if items and abs(stated_total - money(totals["total_cost"])) > money("0.01"):
-        notes.append(
-            f"The AI's stated total ({stated_total}) did not match its line items "
-            f"({money(totals['total_cost'])}). The total was recalculated from the line items; "
-            "check that the figures in the reply text agree."
-        )
+    # The reply's figures are rendered from the line items (app/services/quote_text.py), so a
+    # mismatch with the AI's own stated total no longer reaches the customer; nothing to flag.
     for missing in parsed.missing_information or []:
         text = _clean_text(missing)
         if text:
@@ -83,6 +79,7 @@ def finalize_engine_output(parsed: QuoteEngineOutput) -> QuoteEngineOutput:
 
     if parsed.email_draft:
         parsed.email_draft = re.sub(r'[\s\-_*=]+$', '', parsed.email_draft)
+        parsed.email_draft = parsed.email_draft.replace("**", "")  # plain-text email: drop Markdown bold
     return parsed
 
 
@@ -94,17 +91,17 @@ def run_quote_engine(
 ) -> QuoteEngineOutput:
     """
     Feeds lead raw text and business knowledge base items into the AI engine.
-    Uses Gemini (via OpenAI compatibility) with structured schema verification.
+    Uses the AIML API (OpenAI-compatible) with structured schema verification.
     The returned figures are always recomputed server-side from the line items.
     """
     # Initialize the client dynamically resolving credentials with fallback logic
     user_id = user_profile.get("id") if user_profile else None
-    api_key = custom_api_key or get_gemini_api_key(user_id=user_id)
+    api_key = custom_api_key or get_ai_api_key(user_id=user_id)
     if not api_key:
-        raise RuntimeError("No Gemini API key is configured for this workspace")
+        raise RuntimeError("No AI API key is configured for this workspace")
     # The SDK defaults (10-minute timeout, silent retries) can hold a request for
     # many minutes; retries and model fallback are handled explicitly below.
-    openai_client = OpenAI(api_key=api_key, base_url=settings.OPENAI_BASE_URL, timeout=AI_REQUEST_TIMEOUT_SECONDS, max_retries=0)
+    openai_client = ai_provider.make_client(api_key, timeout=AI_REQUEST_TIMEOUT_SECONDS)
 
     kb_contents = [normalize_extracted_text(c) for c in (kb_contents or [])]
     kb_contents, kb_trimmed = select_kb_context(kb_contents, lead_text, settings.KB_CONTEXT_MAX_CHARS)
@@ -160,8 +157,9 @@ def run_quote_engine(
         "rates, material costs, labor multipliers, and templates. If the Knowledge Base defines specific rates, they override the base labor and markup rates.\n"
         "4. STRICT PRICING RULE: If the Knowledge Base does not contain specific pricing or information for a "
         "material, product, service, or process requested by the client, you MUST NOT generate or estimate the price on your own. "
-        "Instead, you must set the unit_price and total_price of that line item to 0, set needs_review to true, and explicitly specify in the "
-        "description and the email draft that the pricing for this item was not found in the Knowledge Base and requires human manual configuration.\n"
+        "Instead, you must set the unit_price and total_price of that line item to 0 and set needs_review to true. Keep its description "
+        "customer-facing (what the item is); the reply shows it as 'price to be confirmed'. Put the internal reason in assumptions, not in "
+        "the description.\n"
         "4a. RANGES AND RULES: When the Knowledge Base gives a price RANGE for an item (e.g. 'delivery 2,000-5,000'), use the LOWER "
         "bound as a starting figure, set needs_review to true, and state the full range in the description. When it gives a PERCENTAGE "
         "surcharge (e.g. 'custom dimensions 5-15%'), calculate it at the lower percentage of that product's price, set needs_review to "
@@ -173,9 +171,18 @@ def run_quote_engine(
         "4e. LABOUR FOR CUSTOM WORK: When the customer asks for work that is done by time and has no figure in the Knowledge Base "
         "(custom upgrades, upholstery work, modification, repair, fitting or installation with no stated charge), add a SEPARATE line "
         "with category 'labor': estimate the hours a skilled worker would need, use the base labour rate from rule 1 as the unit_price "
-        "and the hours as the quantity, set needs_review to true, and write 'estimated N hours at <rate>/hour' in the description. "
-        "This labour line is in addition to the zero-priced line for any material whose price is unknown. Never add such a line for a "
-        "catalogue product that has a selling price.\n"
+        "and the hours as the quantity, set needs_review to true, and describe the work in customer terms (e.g. 'Custom fitting work'); "
+        "never write the hourly rate or hours breakdown in the description. This labour line is in addition to the zero-priced line for "
+        "any material whose price is unknown. Never add such a line for a catalogue product that has a selling price (see rule 4g).\n"
+        "4g. CATALOGUE PRODUCT WITH OPTIONS: When the requested item is a product in the Knowledge Base catalogue (same product type, at the "
+        "standard size or close to it), quote that product's selling price as its own line, even if the customer calls it 'custom' or asks "
+        "for a particular material, colour, finish, design or accessory. Then add each requested customisation as a separate line using the "
+        "Knowledge Base customisation rules (rule 4a for percentages and ranges, rule 4 when no figure is given). Every option the customer "
+        "asks for that the standard product does not already include (for example an upholstered headboard, a premium laminate, carving) "
+        "gets its own line; when the Knowledge Base prices it 'based on material', 'based on fabric' or 'quoted separately', use rule 4 "
+        "(price 0, needs_review true). Compare the requested dimensions with the catalogue's standard dimensions: if they are the same "
+        "(ignoring height when the customer did not give one) it is NOT a custom size, so add no custom-dimensions surcharge. Add delivery "
+        "or installation as separate 'other' lines when the Knowledge Base gives a charge for the customer's location.\n"
         "4f. If the base labour rate from rule 1 was not used anywhere in this quote, add one entry to assumptions saying so and why "
         "(for example: 'Labour rate not applied: every priced item is a catalogue product whose selling price already includes labour').\n"
         "4c. KNOWLEDGE BASE INSTRUCTIONS: Follow business rules the Knowledge Base states for quoting (discount limits, what to keep "
@@ -184,8 +191,12 @@ def run_quote_engine(
         "numbers as written and add 'Knowledge base prices are in <currency>' to assumptions.\n"
         "5. Provide a fully structured breakdown. Every line item needs a quantity, a unit_price, a total_price equal to quantity x unit_price, "
         "and a category: 'material' for goods and raw materials, 'labor' for labor and machine time, 'other' for shipping and fees.\n"
-        "6. Draft a highly professional B2B response email to the lead. Use the pricing sheets and standard operating procedures "
-        "found in the Knowledge Base to structure the email style and tone.\n"
+        "6. Draft a professional reply email to the customer in plain text (no Markdown, no ** or #). Do NOT write any prices, amounts, "
+        "totals, cost breakdowns or currency figures in the email text: put the exact line {{PRICING_TABLE}} on its own line where the "
+        "quotation belongs, and the system inserts a table generated from your line items. You may mention non-price facts from the "
+        "Knowledge Base (lead times, what is needed to confirm the order). Address the customer by name if the inquiry gives it; otherwise "
+        "write 'Dear Customer'. Never leave placeholders such as [Customer Name] in the email. Never reveal internal costs, labour costs, "
+        "overheads or margins.\n"
         "7. Output must conform exactly to the required JSON schema.\n"
         f"{signature_instructions}\n"
         "9. NO TRAILING SPAM: Do NOT append any decorative separators, horizontal rules, or trailing hyphens/dashes "
@@ -222,7 +233,11 @@ def run_quote_engine(
 
 def _is_transient(error: Exception) -> bool:
     text = str(error).lower()
-    return any(marker in text for marker in ("error code: 503", "error code: 429", "error code: 500", "unavailable", "overloaded", "high demand", "timed out", "timeout"))
+    if type(error).__name__ in ("APIConnectionError", "APITimeoutError", "ConnectError", "ReadTimeout"):
+        return True  # a dropped connection is worth one retry, then the fallback model
+    return any(marker in text for marker in (
+        "error code: 503", "error code: 502", "error code: 504", "error code: 429", "error code: 500",
+        "unavailable", "overloaded", "high demand", "timed out", "timeout", "connection error"))
 
 
 def _is_model_unavailable(error: Exception) -> bool:
@@ -231,18 +246,22 @@ def _is_model_unavailable(error: Exception) -> bool:
 
 
 def candidate_models() -> list[str]:
-    models = [settings.GEMINI_MODEL] + [m.strip() for m in (settings.GEMINI_FALLBACK_MODELS or "").split(",")]
-    return list(dict.fromkeys(m for m in models if m))
+    return ai_provider.candidate_models()
+
+
+def _is_auth_or_quota(error: Exception) -> bool:
+    text = str(error).lower()
+    return any(code in text for code in ("error code: 401", "error code: 402", "error code: 403", "error code: 429"))
 
 
 def _generate_once(openai_client: OpenAI, model: str, system_instruction: str, user_prompt: str) -> QuoteEngineOutput:
     """
-    One model, with the configured reasoning effort. Left at their default, the
-    newer Gemini models can spend over a minute "thinking" about a quote whose
+    One model, with the configured reasoning effort. Left at their default,
+    reasoning models can spend over a minute "thinking" about a quote whose
     arithmetic is recomputed on the server anyway. A model that rejects the
     setting is retried without it.
     """
-    effort = (settings.GEMINI_REASONING_EFFORT or "").strip().lower()
+    effort = (settings.AI_REASONING_EFFORT or "").strip().lower()
     if effort:
         try:
             return _call_model(openai_client, model, system_instruction, user_prompt, {"reasoning_effort": effort})
@@ -271,7 +290,7 @@ def _call_model(openai_client: OpenAI, model: str, system_instruction: str, user
             raise ValueError("Model returned no parsed output")
         return finalize_engine_output(parsed)
     except Exception as e:
-        if _is_transient(e) or _is_model_unavailable(e) or "error code: 40" in str(e).lower():
+        if _is_transient(e) or _is_model_unavailable(e) or _is_auth_or_quota(e):
             raise  # the JSON-mode retry would hit the same wall
         logger.warning(f"Structured output failed on {model}, retrying in JSON mode: {str(e)[:200]}")
         completion = openai_client.chat.completions.create(
@@ -295,17 +314,20 @@ def _generate_with_fallbacks(openai_client: OpenAI, system_instruction: str, use
     before moving on; a retired model is skipped; a rejected key stops at once.
     """
     last_error: Exception | None = None
-    for model in candidate_models():
+    models = candidate_models()
+    for model in models:
         for attempt in range(2):
             try:
                 result = _generate_once(openai_client, model, system_instruction, user_prompt)
-                if model != settings.GEMINI_MODEL:
-                    logger.warning(f"Quote generated with fallback model {model}; {settings.GEMINI_MODEL} was unavailable.")
+                if model != models[0]:
+                    logger.warning(f"Quote generated with fallback model {model}; {models[0]} was unavailable.")
                 return result
             except Exception as e:
                 last_error = e
-                quota_exhausted = "error code: 429" in str(e).lower()  # retrying the same model cannot help
-                if _is_transient(e) and attempt == 0 and not quota_exhausted:
+                if _is_auth_or_quota(e):  # another model on the same key cannot help
+                    logger.error(f"AI generation failed on {model}: {str(e)}")
+                    raise RuntimeError(f"AI Quote engine failed: {str(e)}")
+                if _is_transient(e) and attempt == 0:
                     time.sleep(RETRY_DELAY_SECONDS)
                     continue
                 if _is_transient(e) or _is_model_unavailable(e):

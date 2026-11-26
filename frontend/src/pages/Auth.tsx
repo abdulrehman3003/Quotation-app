@@ -363,8 +363,9 @@ export const Auth: React.FC = () => {
           </div>
         )}
 
-        {/* Toggle tabs for Login / Register */}
-        {(mode === 'login' || mode === 'register') && (
+        {/* Toggle tabs for Login / Register. Registration is invite-only: accounts are
+            created by an admin, or by a teammate's invite link. */}
+        {inviteToken && (mode === 'login' || mode === 'register') && (
           <div className="flex bg-slate-900/60 p-1 rounded-lg border border-slate-800/80">
             <button
               type="button"

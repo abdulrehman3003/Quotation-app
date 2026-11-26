@@ -7,4 +7,15 @@ os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.
 os.environ["SUPABASE_JWT_SECRET"] = "test-secret"
 os.environ["ENABLE_EMAIL_POLLER"] = "false"
 os.environ["FRONTEND_URL"] = "https://app.example.com"
-os.environ["GEMINI_API_KEY"] = ""
+os.environ["AI_API_KEY"] = ""
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_plan_limits_by_default(monkeypatch):
+    """Plan limits are off unless a test turns them on (tests/test_plans.py)."""
+    from app.core import plans
+    monkeypatch.setattr(plans, "company_plan", lambda company_id: plans._unlimited())
+    monkeypatch.setattr(plans, "is_suspended", lambda company_id: False)
