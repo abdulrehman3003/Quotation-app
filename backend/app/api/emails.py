@@ -115,7 +115,8 @@ def transfer_email_to_leads(email_id: str, current_user: dict = Depends(get_curr
         )
 
 
-def send_smtp_email(to_address: str, subject: str, body: str, custom_user: str | None = None, custom_password: str | None = None) -> bool:
+def send_smtp_email(to_address: str, subject: str, body: str, custom_user: str | None = None, custom_password: str | None = None,
+                    attachments: list[tuple[str, bytes, str]] | None = None) -> bool:
     """
     Sends a real email via Gmail SMTP using configured credentials.
     Returns True on success, False if credentials are not configured.
@@ -137,13 +138,18 @@ def send_smtp_email(to_address: str, subject: str, body: str, custom_user: str |
         logger.warning("Gmail SMTP credentials not configured. Cannot send real email.")
         return False
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed" if attachments else "alternative")
     msg["Subject"] = subject
     msg["From"] = gmail_user
     msg["To"] = to_address
 
     # Plain text part
     msg.attach(MIMEText(body, "plain"))
+    for filename, content, mime_type in attachments or []:
+        from email.mime.application import MIMEApplication
+        part = MIMEApplication(content, _subtype=mime_type.split("/")[-1])
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(part)
 
     try:
         from app.services.mail_oauth import OAuthToken, send_message_oauth

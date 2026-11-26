@@ -169,13 +169,13 @@ export interface Quote {
   outcome_source?: string | null
   responded_at?: string | null
   customer_comment?: string | null
-  delivery?: 'email' | 'manual' | null
+  delivery?: 'email' | 'manual' | 'whatsapp' | null
   sent_to?: string | null
   follow_up_log?: FollowUpLogEntry[]
 }
 
 export interface DispatchOptions {
-  mode?: 'email' | 'manual'
+  mode?: 'email' | 'manual' | 'whatsapp'
   confirm_unpriced?: boolean
   include_link?: boolean
 }

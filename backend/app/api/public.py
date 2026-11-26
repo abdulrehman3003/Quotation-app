@@ -124,6 +124,17 @@ def view_public_quote(token: str, preview: bool = Query(False, description="Staf
     return serialize_public_quote(quote, seller, company_name)
 
 
+@router.get("/quotes/{token}/pdf")
+def download_public_quote_pdf(token: str):
+    """The quotation PDF for a quote link (also fetched by Twilio to attach it on WhatsApp)."""
+    from fastapi.responses import Response
+    from app.api.quotes import quote_pdf_bytes
+    from app.services.quote_pdf import pdf_filename
+    quote = _load_quote(token)
+    return Response(content=quote_pdf_bytes(quote), media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{pdf_filename(quote)}"'})
+
+
 class RespondInput(BaseModel):
     decision: str
     comment: Optional[str] = None

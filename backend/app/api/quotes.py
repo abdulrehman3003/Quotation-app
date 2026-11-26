@@ -183,6 +183,28 @@ def company_display_name(company_id: str, user_profile: dict | None = None) -> s
     return ""
 
 
+def quote_pdf_bytes(quote: dict) -> bytes:
+    """The customer-facing quotation PDF for a quote (company, seller contact, terms and link)."""
+    from app.services.quote_pdf import build_quote_pdf
+    seller = {}
+    try:
+        res = supabase.table("users").select("name,email,phone_number,default_quote_parameters").eq("id", quote.get("user_id")).execute()
+        seller = res.data[0] if res.data else {}
+    except Exception:
+        pass
+    params = seller.get("default_quote_parameters") if isinstance(seller.get("default_quote_parameters"), dict) else {}
+    company = company_display_name(quote.get("company_id"), seller) or "Quotation"
+    return build_quote_pdf(safe_parse_quote(dict(quote)), company, seller, public_quote_url(quote.get("public_token")),
+                           str(params.get("payment_terms") or "").strip())
+
+
+def public_quote_pdf_url(token: str | None) -> str | None:
+    """Public URL of the quote PDF, reachable by Twilio (needs PUBLIC_BACKEND_URL)."""
+    if not token or not settings.PUBLIC_BACKEND_URL:
+        return None
+    return f"{settings.PUBLIC_BACKEND_URL.rstrip('/')}/api/public/quotes/{token}/pdf"
+
+
 def public_quote_url(token: str | None) -> str | None:
     if not token or not settings.FRONTEND_URL:
         return None
@@ -470,7 +492,8 @@ def update_quote(
 
 
 class DispatchInput(BaseModel):
-    # 'email' sends the reply from the connected mailbox; 'manual' only records the
+    # 'email' sends the reply from the connected mailbox; 'whatsapp' sends the quotation
+    # and its online/PDF link to the customer's WhatsApp chat; 'manual' only records the
     # quote as sent (the user delivers it themselves, e.g. by pasting the reply).
     mode: Optional[str] = None
     confirm_unpriced: bool = False
@@ -517,12 +540,43 @@ def dispatch_quote(
     customer_phone = quote.get("customer_phone") or fallback["phone"]
     customer_name = quote.get("customer_name") or fallback["name"]
 
-    mode = data.mode or ("email" if customer_email else "manual")
-    if mode not in ("email", "manual"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode must be 'email' or 'manual'")
+    chat = None
+    if lead.get("chat_id"):
+        chat_rows = supabase.table("whatsapp_chats").select("*").eq("id", lead["chat_id"]).eq("company_id", company_id).execute().data
+        chat = chat_rows[0] if chat_rows else None
+    if chat and chat.get("name_confirmed") and chat.get("customer_name") and customer_name in (None, "", "Customer", "WhatsApp Lead"):
+        customer_name = chat["customer_name"]
+
+    # A request that came in on WhatsApp is answered on WhatsApp unless the user chooses otherwise.
+    mode = data.mode or ("whatsapp" if chat else "email" if customer_email else "manual")
+    if mode not in ("email", "manual", "whatsapp"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode must be 'email', 'whatsapp' or 'manual'")
 
     public_token = quote.get("public_token") or new_public_token()
     link = public_quote_url(public_token)
+
+    if mode == "whatsapp":
+        if not chat:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "no_whatsapp", "message": "This request didn't come from WhatsApp, so there is no chat to send it to."}
+            )
+        from app.api.whatsapp import quotation_whatsapp_text, send_twilio_whatsapp, first_name
+        user_res = supabase.table("users").select("default_quote_parameters").eq("id", current_user["id"]).execute()
+        seller = company_display_name(company_id, user_res.data[0] if user_res.data else None) or "us"
+        greeting = first_name(chat.get("customer_name")) if chat.get("name_confirmed", True) else ""
+        text = quotation_whatsapp_text(quote, seller, greeting, link if data.include_link else None)
+        pdf_url = public_quote_pdf_url({**quote, "public_token": public_token}.get("public_token"))
+        if not quote.get("public_token"):
+            update_quote_row(quote_id, company_id, {"public_token": public_token})  # Twilio fetches the PDF by this token
+        ok, reason = send_twilio_whatsapp(chat["phone_number"], text, current_user["id"], media_url=pdf_url)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "whatsapp_failed", "message": f"The quote was not sent on WhatsApp: {reason}"}
+            )
+        supabase.table("whatsapp_messages").insert({"chat_id": chat["id"], "sender": "agent", "text": text}).execute()
+        customer_phone = customer_phone or chat.get("phone_number")
 
     if mode == "email":
         if not customer_email:
@@ -550,12 +604,16 @@ def dispatch_quote(
 
         # send_smtp_email raises HTTPException(502) on transport/auth failure; let it
         # propagate so the quote stays a draft instead of being recorded as sent.
+        from app.services.quote_pdf import pdf_filename
+        pdf = quote_pdf_bytes({**quote, "public_token": public_token, "customer_name": customer_name,
+                               "customer_email": customer_email, "customer_phone": customer_phone})
         sent = send_smtp_email(
             to_address=customer_email,
             subject=subject[:200],
             body=body,
             custom_user=gmail_email,
-            custom_password=gmail_password
+            custom_password=gmail_password,
+            attachments=[(pdf_filename(quote), pdf, "application/pdf")],
         )
         if not sent:
             raise HTTPException(
@@ -596,15 +654,16 @@ def dispatch_quote(
         result = safe_parse_quote(dispatch_response.data[0])
         emit_quote_event(company_id, "quote.sent", result)
         result["delivery"] = mode
-        result["sent_to"] = customer_email if mode == "email" else None
+        result["sent_to"] = customer_email if mode == "email" else (chat or {}).get("phone_number") if mode == "whatsapp" else None
         return result
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to record dispatch of quote {quote_id}: {str(e)}")
         detail = "Failed to dispatch quote"
-        if mode == "email":
-            detail = f"The email was sent to {customer_email}, but the quote could not be marked as sent. Do not send it again; refresh and mark it as sent."
+        if mode in ("email", "whatsapp"):
+            where = customer_email if mode == "email" else "the customer's WhatsApp"
+            detail = f"The quote was sent to {where}, but it could not be marked as sent. Do not send it again; refresh and mark it as sent."
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
 
 

@@ -30,10 +30,10 @@ def env(monkeypatch):
     sent_mail = []
     state = {"mailbox": ("rep@seller.com", "app-pw"), "smtp_ok": True, "user": USER}
 
-    def fake_send(to_address, subject, body, custom_user=None, custom_password=None):
+    def fake_send(to_address, subject, body, custom_user=None, custom_password=None, attachments=None):
         if not state["smtp_ok"]:
             raise HTTPException(status_code=502, detail="Failed to send email")
-        sent_mail.append({"to": to_address, "subject": subject, "body": body})
+        sent_mail.append({"to": to_address, "subject": subject, "body": body, "attachments": attachments or []})
         return True
 
     monkeypatch.setattr(emails_api, "send_smtp_email", fake_send)
@@ -104,6 +104,8 @@ def test_edit_reprices_on_server_then_sends_with_link(env):
     assert mail["to"] == "buyer@acme.com"
     assert "Seller Ltd" in mail["subject"] and "AXRFLOWS" not in mail["subject"]
     assert f"https://app.example.com/q/{q['public_token']}" in mail["body"]
+    (filename, content, mime), = mail["attachments"]  # the approved quote goes out with its PDF
+    assert filename.endswith(".pdf") and mime == "application/pdf" and content.startswith(b"%PDF")
     row = env["db"].tables["quotes"][0]
     assert row["status"] == "dispatched" and row["sent_at"]
     assert env["db"].tables["leads"][0]["status"] == "dispatched"
@@ -280,3 +282,4 @@ def test_untouched_estimates_stay_flagged_after_save(env):
     assert saved["itemized_breakdown"][1]["needs_review"] is True
     res = env["client"].post(f"/api/quotes/{q['id']}/dispatch", json={})
     assert res.status_code == 409 and res.json()["detail"]["code"] == "unpriced_items"
+

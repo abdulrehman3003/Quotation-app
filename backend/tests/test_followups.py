@@ -23,7 +23,7 @@ def env(monkeypatch):
     sent = []
     for module in (followups, whatsapp):
         monkeypatch.setattr(module, "supabase", db)
-    monkeypatch.setattr(whatsapp, "send_twilio_whatsapp", lambda to, text, uid: (sent.append((to, text)), (True, None))[1])
+    monkeypatch.setattr(whatsapp, "send_twilio_whatsapp", lambda to, text, uid, media_url=None: (sent.append((to, text, media_url)), (True, None))[1])
     monkeypatch.setattr(followups, "nudge_text", lambda chat, company, uid: f"Hi! Still interested? ({company})")
     db.tables["users"] = [{"id": "u1", "company_id": "c1", "name": "Rep", "default_quote_parameters": {"company_name": "Woodcorp"}}]
     db.tables["companies"] = [{"id": "c1", "name": "Woodcorp"}]

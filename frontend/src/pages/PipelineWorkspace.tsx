@@ -238,7 +238,9 @@ export const PipelineWorkspace: React.FC = () => {
       if (dirty) await updateQuote(quoteId, buildUpdates())
       const sent = await dispatchQuote(quoteId, options)
       if (sent.delivery === 'email') {
-        showSuccess('Quote sent', `Quote ${sent.quote_number || ''} was emailed to ${sent.sent_to}.`.replace('  ', ' '))
+        showSuccess('Quote sent', `Quote ${sent.quote_number || ''} was emailed to ${sent.sent_to} with the PDF attached.`.replace('  ', ' '))
+      } else if (sent.delivery === 'whatsapp') {
+        showSuccess('Quote sent on WhatsApp', `Quote ${sent.quote_number || ''} was sent to ${sent.sent_to} on WhatsApp with the PDF and online link.`.replace('  ', ' '))
       } else {
         const copied = await copyText(emailText)
         showSuccess(
@@ -259,6 +261,13 @@ export const PipelineWorkspace: React.FC = () => {
           () => send({ ...options, mode: 'manual' }),
           'Mark as sent'
         )
+      } else if (err.code === 'whatsapp_failed') {
+        showConfirm(
+          "Couldn't send on WhatsApp",
+          `${err.message} Mark it as sent and copy the reply so you can deliver it yourself?`,
+          () => send({ ...options, mode: 'manual' }),
+          'Mark as sent'
+        )
       } else if (err.code === 'no_recipient') {
         showError('No customer email', 'Add the customer\'s email address under "Send to", then send again.')
       } else {
@@ -269,7 +278,13 @@ export const PipelineWorkspace: React.FC = () => {
     }
   }
 
+  const isWhatsAppLead = activeLead?.source === 'whatsapp'
+
   const handleDispatch = () => {
+    if (isWhatsAppLead) {
+      send({ mode: 'whatsapp' })
+      return
+    }
     if (!customerEmail.trim()) {
       showConfirm(
         'No customer email',
@@ -844,7 +859,7 @@ export const PipelineWorkspace: React.FC = () => {
                         )}
                         <button onClick={handleDispatch} disabled={isDispatched || isSending} className="btn btn-primary">
                           {isDispatched ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-                          {isDispatched ? 'Quote sent' : isSending ? 'Sending' : 'Send quote'}
+                          {isDispatched ? 'Quote sent' : isSending ? 'Sending' : isWhatsAppLead ? 'Approve & send on WhatsApp' : 'Approve & send'}
                         </button>
                       </div>
                     </div>

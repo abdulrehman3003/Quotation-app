@@ -19,6 +19,7 @@ dependencies = [
     "cryptography>=42.0.0",
     "imap-tools>=1.6.0",
     "ezdxf>=1.4.5",
+    "fpdf2>=2.9.0",
 ]
 
 [dependency-groups]
