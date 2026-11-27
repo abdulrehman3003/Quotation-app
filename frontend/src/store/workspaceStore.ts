@@ -356,6 +356,7 @@ export interface CustomerEmail {
   body: string
   status: string // 'unread', 'imported', 'replied'
   created_at: string
+  from_spam?: boolean // found in the mailbox's Spam / Junk folder
 }
 
 export interface WhatsAppChat {
@@ -863,7 +864,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           if (email.status === 'unread') {
             get().addNotification({
               id: `email-${email.id}`,
-              title: `New Email from ${email.sender_email}`,
+              title: `${email.from_spam ? 'Email in spam' : 'New Email'} from ${email.sender_email}`,
               description: email.subject,
               type: 'email',
               created_at: email.created_at,

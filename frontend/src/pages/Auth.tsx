@@ -335,7 +335,7 @@ export const Auth: React.FC = () => {
             <span className="text-white font-semibold text-2xl">A</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-brand-400">
-            {inviteInfo ? `Join ${inviteInfo.company_name}` : 'Welcome to AXRFLOWS'}
+            {inviteInfo ? `Join ${inviteInfo.company_name}` : 'Welcome to AxrflowsQuotes'}
           </h1>
           <p className="text-sm text-slate-400 mt-1">
             {inviteInfo

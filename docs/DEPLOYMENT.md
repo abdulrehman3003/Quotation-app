@@ -49,8 +49,9 @@ Open the Supabase SQL editor and run the files in `database/` in this order:
 | 13 | `migration_v13_company_notifications.sql` | Messages from the admin to companies (payment reminders, notices) and per-user read receipts |
 | 14 | `migration_v14_whatsapp_customer_name.sql` | `whatsapp_chats.name_confirmed`: the assistant asks for the customer's name |
 | 15 | `migration_v15_follow_ups.sql` | Automatic WhatsApp follow-ups, expiry reminders, STOP opt-out, follow-up log on quotes |
+| 16 | `migration_v16_spam_folder.sql` | `customer_emails.from_spam`: unread mail from the last 7 days in the Spam / Junk folder is imported with a "From spam" badge and never auto-drafted (`CHECK_SPAM_FOLDER=false` turns this off) |
 
-v4 and v8 to v15 are safe to re-run. v9 approves every account that exists when it first runs, so run it before sharing the site publicly.
+v4 and v8 to v16 are safe to re-run. v9 approves every account that exists when it first runs, so run it before sharing the site publicly.
 
 > **Current development database (checked 2026-11-26):** `app_settings` (v4) and `mail_connections` (v8) are missing. Run `migration_v4.sql` and `migration_v8_mail_oauth.sql` there.
 

@@ -102,7 +102,7 @@ def test_edit_reprices_on_server_then_sends_with_link(env):
     assert res.json()["delivery"] == "email" and res.json()["sent_to"] == "buyer@acme.com"
     mail = env["mail"][0]
     assert mail["to"] == "buyer@acme.com"
-    assert "Seller Ltd" in mail["subject"] and "AXRFLOWS" not in mail["subject"]
+    assert "Seller Ltd" in mail["subject"] and "AxrflowsQuotes" not in mail["subject"]
     assert f"https://app.example.com/q/{q['public_token']}" in mail["body"]
     (filename, content, mime), = mail["attachments"]  # the approved quote goes out with its PDF
     assert filename.endswith(".pdf") and mime == "application/pdf" and content.startswith(b"%PDF")

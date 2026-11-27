@@ -34,7 +34,7 @@ PLAN_PRICES = {"starter": 59, "growth": 99, "scale": 249}
 UPGRADE_HINT = "Contact us to upgrade your plan."
 
 SUSPENDED_DETAIL = ("WORKSPACE_SUSPENDED: This workspace is paused. "
-                    "Please contact AXRFLOWS to restore access.")
+                    "Please contact AxrflowsQuotes to restore access.")
 
 
 def _unlimited(plan: str = "scale") -> dict:

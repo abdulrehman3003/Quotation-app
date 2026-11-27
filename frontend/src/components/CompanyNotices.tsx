@@ -20,7 +20,7 @@ const dueText = (n: CompanyNotice) => {
   return [amount, due ? `due ${due}` : null].filter(Boolean).join(' · ')
 }
 
-/** One message from AXRFLOWS: title, text, amount and pay link. */
+/** One message from AxrflowsQuotes: title, text, amount and pay link. */
 export const NoticeCard: React.FC<{ notice: CompanyNotice; compact?: boolean }> = ({ notice, compact }) => {
   const Icon = noticeIcon(notice.kind)
   const meta = dueText(notice)
@@ -46,7 +46,7 @@ export const NoticeCard: React.FC<{ notice: CompanyNotice; compact?: boolean }> 
   )
 }
 
-/** Pinned messages from AXRFLOWS across the top of the app, until the admin resolves them. */
+/** Pinned messages from AxrflowsQuotes across the top of the app, until the admin resolves them. */
 export const NoticeBanner: React.FC = () => {
   const { companyNotices, markCompanyNoticesRead } = useWorkspaceStore()
   const pinned = companyNotices.filter((n) => n.show_banner && !n.resolved && (n.kind === 'payment' || !n.read))

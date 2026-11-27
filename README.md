@@ -1,6 +1,6 @@
-# AXRFLOWS — AI quotation workspace
+# AxrflowsQuotes — AI quotation workspace
 
-AXRFLOWS turns customer enquiries from email, WhatsApp or a webhook into priced quotes and a drafted reply. It prices each request against the business's own price lists (Excel, CSV or PDF) using an LLM served through [AIML API](https://aimlapi.com) (default model `openai/gpt-4o-mini`; any of its chat models can be picked in the admin panel). Staff review the draft, then send it. The customer opens an online quote page and accepts or declines.
+AxrflowsQuotes turns customer enquiries from email, WhatsApp or a webhook into priced quotes and a drafted reply. It prices each request against the business's own price lists (Excel, CSV or PDF) using an LLM served through [AIML API](https://aimlapi.com) (default model `openai/gpt-4o-mini`; any of its chat models can be picked in the admin panel). Staff review the draft, then send it. The customer opens an online quote page and accepts or declines.
 
 Flow: **Enquiry → AI draft quote → review and edit → send → customer accepts or declines → reports**
 

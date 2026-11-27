@@ -29,10 +29,10 @@ import {
 const SALES_EMAIL = 'axrflows@gmail.com'
 const SALES_WHATSAPP = ''
 
-const DEMO_MESSAGE = 'Hi, I would like a demo of AXRFLOWS for my workshop.'
+const DEMO_MESSAGE = 'Hi, I would like a demo of AxrflowsQuotes for my workshop.'
 const DEMO_URL = SALES_WHATSAPP
   ? `https://wa.me/${SALES_WHATSAPP}?text=${encodeURIComponent(DEMO_MESSAGE)}`
-  : `mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AXRFLOWS demo request')}&body=${encodeURIComponent(DEMO_MESSAGE)}`
+  : `mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AxrflowsQuotes demo request')}&body=${encodeURIComponent(DEMO_MESSAGE)}`
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate()
@@ -208,7 +208,7 @@ export const LandingPage: React.FC = () => {
               <div className="w-9 h-9 rounded-lg bg-brand-500 flex items-center justify-center">
                 <span className="text-white font-semibold text-xl">A</span>
               </div>
-              <span className="text-xl font-semibold text-white tracking-wide">AXRFLOWS</span>
+              <span className="text-xl font-semibold text-white tracking-wide">AxrflowsQuotes</span>
             </div>
 
             {/* Desktop Navigation Links with sliding dynamic indicators */}
@@ -338,7 +338,7 @@ export const LandingPage: React.FC = () => {
 
           {/* Subtitle */}
           <p className="mt-6 text-base sm:text-lg text-slate-400 max-w-2xl leading-relaxed">
-            Customers send a message, a sketch or a drawing on WhatsApp or email. AXRFLOWS reads it, prices it from
+            Customers send a message, a sketch or a drawing on WhatsApp or email. AxrflowsQuotes reads it, prices it from
             your own rate sheet and drafts the quote in AED, ready for your estimator to check and send. Minutes, not days.
           </p>
 
@@ -605,7 +605,7 @@ export const LandingPage: React.FC = () => {
                 <span className="text-[11px] font-semibold font-mono tracking-wide text-slate-500 uppercase">Estimate</span>
               </div>
 
-              <h3 className="text-xl font-semibold text-white mb-6">What AXRFLOWS could be worth to you</h3>
+              <h3 className="text-xl font-semibold text-white mb-6">What AxrflowsQuotes could be worth to you</h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
                 {/* Result Block 1 */}
@@ -776,7 +776,7 @@ export const LandingPage: React.FC = () => {
 
                 {plan.setup === null ? (
                   <a
-                    href={`mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AXRFLOWS Scale plan')}`}
+                    href={`mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AxrflowsQuotes Scale plan')}`}
                     className="mt-8 w-full py-3 text-center text-sm font-semibold rounded-lg border border-slate-800 text-slate-200 hover:border-slate-700 hover:text-white transition-colors"
                   >
                     {plan.cta}
@@ -876,9 +876,9 @@ export const LandingPage: React.FC = () => {
             <div className="w-7 h-7 rounded-md bg-brand-500 flex items-center justify-center">
               <span className="text-white font-semibold text-sm">A</span>
             </div>
-            <span className="font-semibold text-white tracking-wide">AXRFLOWS</span>
+            <span className="font-semibold text-white tracking-wide">AxrflowsQuotes</span>
           </div>
-          <p>© {new Date().getFullYear()} AXRFLOWS. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} AxrflowsQuotes. All rights reserved.</p>
           <div className="flex gap-6">
             <a href="#" className="hover:text-slate-300 transition-colors">Privacy Policy</a>
             <a href="#" className="hover:text-slate-300 transition-colors">Terms of Service</a>

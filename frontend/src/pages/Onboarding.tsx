@@ -268,7 +268,7 @@ export const Onboarding: React.FC = () => {
             <span>Workspace Setup Wizard</span>
           </div>
           <h1 className="text-3xl font-semibold text-white tracking-tight">
-            Configure Your AXRFLOWS Engine
+            Configure Your AxrflowsQuotes Engine
           </h1>
           <p className="text-sm text-slate-400 mt-1">
             Set up your isolated tenant workspace, pricing rules, and communication channels in under 2 minutes.

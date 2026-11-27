@@ -54,7 +54,7 @@ const AdminLogin: React.FC<{ initialError?: string }> = ({ initialError }) => {
           <div className="w-12 h-12 rounded-lg bg-indigo-600 flex items-center justify-center mb-3">
             <Lock className="text-white h-6 w-6" />
           </div>
-          <h1 className="text-xl font-semibold text-white">AXRFLOWS Admin Portal</h1>
+          <h1 className="text-xl font-semibold text-white">AxrflowsQuotes Admin Portal</h1>
           <p className="text-xs text-slate-400 mt-1">Sign in with an account that has the admin role</p>
         </div>
 
@@ -114,7 +114,7 @@ const PendingApproval: React.FC = () => {
         </div>
         <h1 className="text-lg font-semibold text-white">Your account is waiting for approval</h1>
         <p className="mt-3 text-sm text-slate-400 leading-relaxed">
-          AXRFLOWS workspaces are set up for each business by our team. We will let you know when yours is ready.
+          AxrflowsQuotes workspaces are set up for each business by our team. We will let you know when yours is ready.
           If you were invited by a colleague, open the invite link they sent you.
         </p>
         <button
@@ -144,7 +144,7 @@ const WorkspaceSuspended: React.FC = () => {
         </div>
         <h1 className="text-lg font-semibold text-white">This workspace is paused</h1>
         <p className="mt-3 text-sm text-slate-400 leading-relaxed">
-          Your company's AXRFLOWS access is on hold. Please contact AXRFLOWS to restore it. Your data is kept safe in the meantime.
+          Your company's AxrflowsQuotes access is on hold. Please contact AxrflowsQuotes to restore it. Your data is kept safe in the meantime.
         </p>
         {due.length > 0 && (
           <div className="mt-6 space-y-3 text-left rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">

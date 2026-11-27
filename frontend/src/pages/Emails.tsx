@@ -374,6 +374,11 @@ export default function Emails() {
                           {email.subject || '(no subject)'}
                         </p>
                         <p className="mt-0.5 pl-3.5 truncate text-xs text-slate-500">{previewOf(email.body)}</p>
+                        {email.from_spam && (
+                          <span className="badge badge-warning mt-2 ml-3.5" title="Gmail put this in Spam. Check it before adding it to the pipeline.">
+                            From spam
+                          </span>
+                        )}
                         {!isUnread && STATUS_BADGE[email.status] && (
                           <span className={`${STATUS_BADGE[email.status].className} mt-2 ml-3.5`}>
                             {STATUS_BADGE[email.status].label}
@@ -394,9 +399,16 @@ export default function Emails() {
             <>
               <div className="px-8 py-5 border-b border-slate-800 shrink-0">
                 <div className="flex items-start justify-between gap-6">
-                  <h2 className="text-lg font-semibold text-slate-50 leading-snug">
-                    {selectedEmail.subject || '(no subject)'}
-                  </h2>
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-semibold text-slate-50 leading-snug">
+                      {selectedEmail.subject || '(no subject)'}
+                    </h2>
+                    {selectedEmail.from_spam && (
+                      <p className="mt-1.5 text-xs text-amber-300">
+                        Found in your mailbox's Spam folder. Check it's a real enquiry before adding it to the pipeline.
+                      </p>
+                    )}
+                  </div>
                   {selectedEmail.status === 'unread' && (
                     <button
                       onClick={() => handleTransfer(selectedEmail.id)}

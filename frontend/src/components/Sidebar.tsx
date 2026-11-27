@@ -73,7 +73,7 @@ export const Sidebar: React.FC = () => {
     return () => clearInterval(interval)
   }, [fetchEmails, fetchChats])
 
-  // Messages from AXRFLOWS (payment reminders, notices)
+  // Messages from AxrflowsQuotes (payment reminders, notices)
   useEffect(() => {
     fetchCompanyNotices()
     fetchTeamReminders()
@@ -140,7 +140,7 @@ export const Sidebar: React.FC = () => {
           <div className="w-7 h-7 rounded-md bg-brand-600 flex items-center justify-center text-white text-sm font-semibold">
             A
           </div>
-          <span className="text-sm font-semibold tracking-wide text-slate-50">AXRFLOWS</span>
+          <span className="text-sm font-semibold tracking-wide text-slate-50">AxrflowsQuotes</span>
         </div>
 
         <div className="relative" ref={popoverRef}>
@@ -170,7 +170,7 @@ export const Sidebar: React.FC = () => {
               <div className="max-h-80 overflow-y-auto py-1">
                 {companyNotices.slice(0, 10).map((n) => (
                   <div key={n.id} className={`px-4 py-2.5 border-b border-slate-800/60 ${n.read ? '' : 'bg-slate-800/40'}`}>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">From AXRFLOWS · {new Date(n.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">From AxrflowsQuotes · {new Date(n.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>
                     <NoticeCard notice={n} compact />
                   </div>
                 ))}

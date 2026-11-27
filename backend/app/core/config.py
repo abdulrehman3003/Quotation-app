@@ -12,7 +12,7 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    PROJECT_NAME: str = "AXRFLOWS Backend"
+    PROJECT_NAME: str = "AxrflowsQuotes Backend"
     
     # Supabase Settings
     SUPABASE_URL: str = Field(..., env="SUPABASE_URL")
@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # set to false on extra replicas.
     ENABLE_EMAIL_POLLER: bool = True
     EMAIL_POLL_INTERVAL_SECONDS: int = 30
+    # Also import unread mail from the last 7 days in the Spam/Junk folder, marked
+    # "from spam" and never auto-drafted, so real enquiries Gmail misfiles aren't lost.
+    CHECK_SPAM_FOLDER: bool = True
 
     # When true, tenants without their own Gemini/Gmail/Twilio credentials
     # silently use the admin user's credentials. Off by default: it lets any

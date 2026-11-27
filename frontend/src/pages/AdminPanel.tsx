@@ -179,19 +179,19 @@ export default function AdminPanel() {
   // Fills the message form from a template, using the chosen company's plan and invoice date.
   const applyTemplate = (template: 'reminder' | 'overdue' | 'received' | 'notice', companyId = msgTarget) => {
     const c = adminCompanies.find((x) => x.id === companyId)
-    const plan = c?.plan_label || 'AXRFLOWS'
+    const plan = c?.plan_label || 'AxrflowsQuotes'
     const price = c?.monthly_price != null ? String(c.monthly_price) : ''
     const due = c?.next_invoice_date ? String(c.next_invoice_date).slice(0, 10) : ''
     const dueText = due ? new Date(due + 'T00:00:00').toLocaleDateString([], { dateStyle: 'medium' }) : 'soon'
     if (template === 'reminder') {
       setMsgKind('payment'); setMsgTitle(`Invoice due ${dueText}`); setMsgAmount(price); setMsgDue(due); setMsgBanner(true)
-      setMsgBody(`Your AXRFLOWS ${plan} plan invoice is due on ${dueText}. You can pay by card or bank transfer using the link below. Thank you!`)
+      setMsgBody(`Your AxrflowsQuotes ${plan} plan invoice is due on ${dueText}. You can pay by card or bank transfer using the link below. Thank you!`)
     } else if (template === 'overdue') {
       setMsgKind('payment'); setMsgTitle('Payment overdue'); setMsgAmount(price); setMsgDue(due); setMsgBanner(true)
       setMsgBody(`We haven't received payment for your ${plan} plan invoice that was due on ${dueText}. Please pay using the link below to keep your workspace active. If you have already paid, just reply to let us know.`)
     } else if (template === 'received') {
       setMsgKind('info'); setMsgTitle('Payment received, thank you'); setMsgAmount(''); setMsgDue(''); setMsgBanner(false)
-      setMsgBody(`We've received your payment for the ${plan} plan. Thank you for choosing AXRFLOWS.`)
+      setMsgBody(`We've received your payment for the ${plan} plan. Thank you for choosing AxrflowsQuotes.`)
     } else {
       setMsgKind('info'); setMsgTitle(''); setMsgAmount(''); setMsgDue(''); setMsgBanner(false); setMsgBody('')
     }
@@ -461,7 +461,7 @@ export default function AdminPanel() {
       <aside className="w-60 h-full shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col">
         <div className="h-16 px-4 flex items-center gap-2.5 border-b border-slate-800 shrink-0">
           <div className="w-7 h-7 rounded-md bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold">A</div>
-          <span className="text-sm font-semibold tracking-wide text-slate-50">AXRFLOWS Admin</span>
+          <span className="text-sm font-semibold tracking-wide text-slate-50">AxrflowsQuotes Admin</span>
         </div>
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
           {navItems.map(item => {
@@ -503,7 +503,7 @@ export default function AdminPanel() {
           <div>
             <h1 className="text-3xl font-semibold text-white tracking-tight flex items-center gap-2">
               <Shield className="h-8 w-8 text-indigo-400" />
-              AXRFLOWS Admin
+              AxrflowsQuotes Admin
             </h1>
             <p className="text-sm text-slate-400 mt-1">
               Your customers, their plans and billing, users, AI settings and system health.
