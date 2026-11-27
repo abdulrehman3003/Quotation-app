@@ -1,0 +1,7 @@
+services:
+  backend:
+    environment:
+      ENABLE_EMAIL_POLLER: "false"
+  caddy:
+    ports: !override
+      - "18443:443"

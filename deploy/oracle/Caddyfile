@@ -1,0 +1,8 @@
+{$DOMAIN} {
+	encode gzip
+	# Large enough for knowledge-base and attachment uploads (10 MB) with headroom.
+	request_body {
+		max_size 25MB
+	}
+	reverse_proxy backend:8000
+}

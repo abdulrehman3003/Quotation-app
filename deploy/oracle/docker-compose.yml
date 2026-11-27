@@ -1,0 +1,44 @@
+# AxrflowsQuotes backend on a single server: the API container behind Caddy,
+# which gets and renews a free HTTPS certificate automatically.
+# Run from this folder:  docker compose up -d --build
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    env_file: ../../backend/.env.production
+    environment:
+      PORT: "8000"
+    restart: unless-stopped
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on: [backend]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in deploy/oracle/.env, e.g. axrflows.duckdns.org}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:
