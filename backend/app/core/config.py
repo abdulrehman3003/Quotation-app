@@ -3,7 +3,7 @@ import os
 import secrets
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -76,5 +76,12 @@ class Settings(BaseSettings):
     PORT: int = 8000
     HOST: str = "127.0.0.1"  # Security: MUST listen on 127.0.0.1, not 0.0.0.0
     FRONTEND_URL: str | None = Field(None, env="FRONTEND_URL")
+
+    @field_validator("FRONTEND_URL", "PUBLIC_BACKEND_URL", mode="after")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str | None) -> str | None:
+        # Browsers send Origin without a trailing slash; a stray "/" here breaks
+        # CORS and produces "//q/<token>" links.
+        return v.strip().rstrip("/") or None if v else v
 
 settings = Settings()

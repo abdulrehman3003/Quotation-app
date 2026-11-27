@@ -26,7 +26,7 @@ import {
 // Where "Book a demo" and "Talk to us" send people. Change these to your real details.
 // SALES_WHATSAPP: international number, digits only (e.g. '971501234567'). When set,
 // demo buttons open a WhatsApp chat; when empty they open an email to SALES_EMAIL.
-const SALES_EMAIL = 'sales@axrflows.com'
+const SALES_EMAIL = 'axrflows@gmail.com'
 const SALES_WHATSAPP = ''
 
 const DEMO_MESSAGE = 'Hi, I would like a demo of AXRFLOWS for my workshop.'
@@ -162,7 +162,10 @@ export const LandingPage: React.FC = () => {
   ]
 
   const bookDemo = () => {
-    window.open(DEMO_URL, '_blank', 'noopener')
+    // A mailto: link opened in a new tab leaves a blank tab behind, so only
+    // WhatsApp opens in a new tab; email hands off to the mail app in place.
+    if (SALES_WHATSAPP) window.open(DEMO_URL, '_blank', 'noopener')
+    else window.location.href = DEMO_URL
   }
 
   const handleCta = () => {

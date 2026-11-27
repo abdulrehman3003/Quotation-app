@@ -59,7 +59,7 @@ if settings.FRONTEND_URL:
 
 env_origins = os.getenv("CORS_ORIGINS")
 if env_origins:
-    allowed_origins.extend([origin.strip() for origin in env_origins.split(",") if origin.strip()])
+    allowed_origins.extend([origin.strip().rstrip("/") for origin in env_origins.split(",") if origin.strip()])
 
 app.add_middleware(
     CORSMiddleware,
