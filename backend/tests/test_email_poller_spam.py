@@ -89,3 +89,19 @@ def test_spam_mail_still_stored_before_migration_v16(db, monkeypatch):
 
     rows = db.tables["customer_emails"]
     assert len(rows) == 1 and "from_spam" not in rows[0] and rows[0]["message_uid"] == "<3@mail>"
+
+
+def test_purge_old_logs_deletes_only_entries_older_than_90_days(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    calls = []
+
+    class Q:
+        def delete(self): return self
+        def lt(self, col, val): calls.append((col, val)); return self
+        def execute(self): return None
+
+    monkeypatch.setattr(email_poller, "supabase", SimpleNamespace(table=lambda name: calls.append(name) or Q()))
+    email_poller.purge_old_logs()
+    assert calls[0] == "system_logs" and calls[1][0] == "created_at"
+    cutoff = datetime.fromisoformat(calls[1][1])
+    assert abs((datetime.now(timezone.utc) - cutoff) - timedelta(days=90)) < timedelta(minutes=1)

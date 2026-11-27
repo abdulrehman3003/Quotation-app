@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useEffect, useCallback } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { DemoRequestModal } from '../components/DemoRequestModal'
 import { useAuthStore } from '../store/authStore'
 import {
   ArrowRight,
@@ -23,16 +24,7 @@ import {
   Check
 } from 'lucide-react'
 
-// Where "Book a demo" and "Talk to us" send people. Change these to your real details.
-// SALES_WHATSAPP: international number, digits only (e.g. '971501234567'). When set,
-// demo buttons open a WhatsApp chat; when empty they open an email to SALES_EMAIL.
-const SALES_EMAIL = 'axrflows@gmail.com'
-const SALES_WHATSAPP = ''
-
-const DEMO_MESSAGE = 'Hi, I would like a demo of AxrflowsQuotes for my workshop.'
-const DEMO_URL = SALES_WHATSAPP
-  ? `https://wa.me/${SALES_WHATSAPP}?text=${encodeURIComponent(DEMO_MESSAGE)}`
-  : `mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AxrflowsQuotes demo request')}&body=${encodeURIComponent(DEMO_MESSAGE)}`
+// "Book a demo" and "Talk to us" open the demo request form (components/DemoRequestModal.tsx).
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate()
@@ -161,11 +153,12 @@ export const LandingPage: React.FC = () => {
     }
   ]
 
-  const bookDemo = () => {
-    // A mailto: link opened in a new tab leaves a blank tab behind, so only
-    // WhatsApp opens in a new tab; email hands off to the mail app in place.
-    if (SALES_WHATSAPP) window.open(DEMO_URL, '_blank', 'noopener')
-    else window.location.href = DEMO_URL
+  const [demoOpen, setDemoOpen] = useState(false)
+  const [demoPlan, setDemoPlan] = useState<string | undefined>(undefined)
+  const closeDemo = useCallback(() => setDemoOpen(false), [])
+  const bookDemo = (plan?: unknown) => {
+    setDemoPlan(typeof plan === 'string' ? plan : undefined)
+    setDemoOpen(true)
   }
 
   const handleCta = () => {
@@ -775,15 +768,15 @@ export const LandingPage: React.FC = () => {
                 </ul>
 
                 {plan.setup === null ? (
-                  <a
-                    href={`mailto:${SALES_EMAIL}?subject=${encodeURIComponent('AxrflowsQuotes Scale plan')}`}
-                    className="mt-8 w-full py-3 text-center text-sm font-semibold rounded-lg border border-slate-800 text-slate-200 hover:border-slate-700 hover:text-white transition-colors"
+                  <button
+                    onClick={() => bookDemo(plan.name)}
+                    className="mt-8 w-full py-3 text-center text-sm font-semibold rounded-lg border border-slate-800 text-slate-200 hover:border-slate-700 hover:text-white transition-colors cursor-pointer"
                   >
                     {plan.cta}
-                  </a>
+                  </button>
                 ) : (
                   <button
-                    onClick={bookDemo}
+                    onClick={() => bookDemo(plan.name)}
                     className={`mt-8 w-full py-3 text-sm font-semibold rounded-lg transition-colors cursor-pointer ${plan.highlight ? 'bg-brand-500 hover:bg-brand-600 text-white' : 'border border-slate-800 text-slate-200 hover:border-slate-700 hover:text-white'}`}
                   >
                     {plan.cta}
@@ -879,12 +872,18 @@ export const LandingPage: React.FC = () => {
             <span className="font-semibold text-white tracking-wide">AxrflowsQuotes</span>
           </div>
           <p>© {new Date().getFullYear()} AxrflowsQuotes. All rights reserved.</p>
-          <div className="flex gap-6">
-            <a href="#" className="hover:text-slate-300 transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-slate-300 transition-colors">Terms of Service</a>
-          </div>
+          <nav aria-label="Legal" className="flex flex-wrap justify-center gap-x-6 gap-y-2">
+            <Link to="/privacy" className="hover:text-slate-300 transition-colors">Privacy Policy</Link>
+            <Link to="/terms" className="hover:text-slate-300 transition-colors">Terms of Service</Link>
+            <Link to="/dpa" className="hover:text-slate-300 transition-colors">DPA</Link>
+            <Link to="/security" className="hover:text-slate-300 transition-colors">Security</Link>
+            <Link to="/acceptable-use" className="hover:text-slate-300 transition-colors">Acceptable Use</Link>
+            <Link to="/cookies" className="hover:text-slate-300 transition-colors">Cookies</Link>
+          </nav>
         </div>
       </footer>
+
+      <DemoRequestModal open={demoOpen} plan={demoPlan} onClose={closeDemo} />
     </div>
   )
 }

@@ -39,10 +39,15 @@ db_handler = SupabaseDBHandler()
 db_handler.setLevel(logging.WARNING)
 logging.getLogger().addHandler(db_handler)
 
+# The interactive API docs map every endpoint for an attacker; only serve them outside production.
+_is_production = os.getenv("ENV", "").strip().lower() == "production"
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Full-stack AI cost calculator and B2B quote dispatch engine",
-    version="0.1.0"
+    version="0.1.0",
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
 )
 
 allowed_origins = [

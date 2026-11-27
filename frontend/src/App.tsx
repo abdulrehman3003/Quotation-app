@@ -16,6 +16,23 @@ import QuotationReports from './pages/QuotationReports'
 import AdminPanel from './pages/AdminPanel'
 import { PublicQuote } from './pages/PublicQuote'
 import { Customers } from './pages/Customers'
+import { PrivacyPolicy } from './pages/legal/PrivacyPolicy'
+import { TermsOfService } from './pages/legal/TermsOfService'
+import { DataProcessingAgreement } from './pages/legal/DataProcessingAgreement'
+import { SecurityPage } from './pages/legal/SecurityPage'
+import { AcceptableUse } from './pages/legal/AcceptableUse'
+import { CookiePolicy } from './pages/legal/CookiePolicy'
+
+const legalRoutes = (
+  <>
+    <Route path="/privacy" element={<PrivacyPolicy />} />
+    <Route path="/terms" element={<TermsOfService />} />
+    <Route path="/dpa" element={<DataProcessingAgreement />} />
+    <Route path="/security" element={<SecurityPage />} />
+    <Route path="/acceptable-use" element={<AcceptableUse />} />
+    <Route path="/cookies" element={<CookiePolicy />} />
+  </>
+)
 import { Sidebar } from './components/Sidebar'
 import { NoticeBanner, NoticeCard } from './components/CompanyNotices'
 import { Lock, LogIn } from 'lucide-react'
@@ -349,6 +366,8 @@ export const App: React.FC = () => {
       <Routes>
         {/* Landing Page Route */}
         <Route path="/" element={<LandingPage />} />
+
+        {legalRoutes}
 
         {/* Auth Route */}
         <Route path="/auth" element={<Auth />} />

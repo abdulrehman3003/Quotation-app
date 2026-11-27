@@ -285,13 +285,30 @@ def poll_gmail_once():
             logger.warning("Global Gmail mailbox configured but no admin user exists to own its emails; skipping.")
 
 
+# The Privacy Policy promises security logs are kept for at most 90 days.
+LOG_RETENTION_DAYS = 90
+LOG_CLEANUP_INTERVAL_SECONDS = 24 * 3600
+
+
+def purge_old_logs():
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=LOG_RETENTION_DAYS)).isoformat()
+    supabase.table("system_logs").delete().lt("created_at", cutoff).execute()
+
+
 def poll_gmail_loop():
     """
     Background worker loop that polls all configured mailboxes on an interval.
     """
     interval = max(10, settings.EMAIL_POLL_INTERVAL_SECONDS)
     last_follow_up_check = 0.0
+    last_log_cleanup = 0.0
     while True:
+        if time.time() - last_log_cleanup >= LOG_CLEANUP_INTERVAL_SECONDS:
+            last_log_cleanup = time.time()
+            try:
+                purge_old_logs()
+            except Exception as purge_err:
+                logger.warning(f"Could not purge old system logs: {str(purge_err)}")
         try:
             poll_gmail_once()
         except Exception as global_err:

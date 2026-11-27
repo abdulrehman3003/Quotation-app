@@ -253,6 +253,10 @@ export const PublicQuote: React.FC = () => {
             >
               <Printer className="h-4 w-4" /> Print or save as PDF
             </button>
+            <p className="mt-4 text-xs text-slate-400">
+              Sent with AxrflowsQuotes ·{' '}
+              <a href="/privacy" target="_blank" rel="noopener" className="underline underline-offset-2 hover:text-slate-600">Privacy</a>
+            </p>
           </footer>
         </article>
       </div>

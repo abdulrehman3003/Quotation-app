@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
 import { useWorkspaceStore } from '../store/workspaceStore'
@@ -537,6 +537,15 @@ export const Auth: React.FC = () => {
               </>
             )}
           </button>
+
+          {mode === 'register' && (
+            <p className="text-center text-xs leading-5 text-slate-500">
+              By creating an account you agree to the{' '}
+              <Link to="/terms" target="_blank" className="text-slate-300 underline underline-offset-2 hover:text-white">Terms of Service</Link>
+              {' '}and{' '}
+              <Link to="/privacy" target="_blank" className="text-slate-300 underline underline-offset-2 hover:text-white">Privacy Policy</Link>.
+            </p>
+          )}
 
           {(mode === 'forgot' || mode === 'recovery') && (
             <button

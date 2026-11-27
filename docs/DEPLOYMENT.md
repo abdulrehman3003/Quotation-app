@@ -50,8 +50,9 @@ Open the Supabase SQL editor and run the files in `database/` in this order:
 | 14 | `migration_v14_whatsapp_customer_name.sql` | `whatsapp_chats.name_confirmed`: the assistant asks for the customer's name |
 | 15 | `migration_v15_follow_ups.sql` | Automatic WhatsApp follow-ups, expiry reminders, STOP opt-out, follow-up log on quotes |
 | 16 | `migration_v16_spam_folder.sql` | `customer_emails.from_spam`: unread mail from the last 7 days in the Spam / Junk folder is imported with a "From spam" badge and never auto-drafted (`CHECK_SPAM_FOLDER=false` turns this off) |
+| 17 | `migration_v17_lockdown.sql` | Security lockdown: browsers get no direct table access (all data goes through the backend), RLS on every table, users can't change their own approval or email, 10 MB limit on knowledge-base uploads |
 
-v4 and v8 to v16 are safe to re-run. v9 approves every account that exists when it first runs, so run it before sharing the site publicly.
+v4 and v8 to v17 are safe to re-run. v9 approves every account that exists when it first runs, so run it before sharing the site publicly.
 
 > **Current development database (checked 2026-11-26):** `app_settings` (v4) and `mail_connections` (v8) are missing. Run `migration_v4.sql` and `migration_v8_mail_oauth.sql` there.
 
@@ -144,7 +145,8 @@ Store these in the host's secret manager, not in a committed file. `.gitignore` 
    ```
    These values are compiled into the bundle, so redeploy after changing any of them.
 3. Add the domains `app.<your-domain>` and, for the admin portal, `admin.<your-domain>`. The app detects the `admin.` prefix. Alternatively, use `https://app.<your-domain>/admin` and skip the subdomain.
-4. Update the pricing section's sales address: `SALES_EMAIL` at the top of `frontend/src/pages/LandingPage.tsx`.
+4. `frontend/vercel.json` sets security headers, including a Content-Security-Policy whose `connect-src` allows `*.supabase.co` and `*.up.railway.app`. **If the backend moves to your own domain (e.g. `api.<your-domain>`), add it to `connect-src`, or login and every API call will be blocked.**
+5. Update the pricing section's sales address: `SALES_EMAIL` at the top of `frontend/src/pages/LandingPage.tsx`.
 
 ## 5. Integrations
 

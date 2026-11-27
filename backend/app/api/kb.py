@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/kb", tags=["Knowledge Base"])
 
+# Large spreadsheets are parsed in memory with pandas; cap them (matches the storage bucket limit, v17).
+MAX_KB_FILE_BYTES = 10 * 1024 * 1024
+
 supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
 
 def get_content_type_from_ext(filename: str) -> str:
@@ -39,7 +42,7 @@ def process_kb_file(
     """
     # Enforce Tenant Isolation: storage path must begin with user's ID
     user_prefix = f"{current_user['id']}/"
-    if not file_path.startswith(user_prefix):
+    if not file_path.startswith(user_prefix) or ".." in file_path or "\\" in file_path:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: Cannot process files outside of your user folder"
@@ -50,6 +53,8 @@ def process_kb_file(
         logger.info(f"Downloading file {file_path} from storage...")
         
         file_bytes = supabase.storage.from_("knowledge_base").download(file_path)
+        if len(file_bytes) > MAX_KB_FILE_BYTES:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is larger than 10 MB.")
         
         # Parse content based on file extension
         parsed_content = parse_file_content(file_bytes, filename)
@@ -73,7 +78,9 @@ def process_kb_file(
             )
             
         return response.data[0]
-        
+
+    except HTTPException:
+        raise
     except ValueError as val_err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
