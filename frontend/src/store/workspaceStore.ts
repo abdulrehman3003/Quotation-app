@@ -354,7 +354,7 @@ export interface CustomerEmail {
   sender_email: string
   subject: string
   body: string
-  status: string // 'unread', 'imported', 'replied'
+  status: string // 'unread', 'read', 'imported', 'replied'
   created_at: string
   from_spam?: boolean // found in the mailbox's Spam / Junk folder
 }
@@ -513,6 +513,7 @@ interface WorkspaceState {
   // New Email & WhatsApp Actions
   fetchEmails: () => Promise<void>
   transferEmail: (emailId: string) => Promise<void>
+  markEmailRead: (emailId: string) => Promise<void>
   replyEmail: (emailId: string, replyBody: string) => Promise<{ sent: boolean; to: string; message: string } | void>
   fetchChats: () => Promise<void>
   setActiveChat: (chat: WhatsAppChat | null) => Promise<void>
@@ -875,6 +876,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } catch (err: any) {
         set({ error: err.message, loadingEmails: false })
       }
+    },
+
+    // Opening an email marks it read: update the list and notifications at once,
+    // then tell the backend (a failure just leaves it unread on the next refresh).
+    markEmailRead: async (emailId: string) => {
+      set((state) => ({
+        emails: state.emails.map((e) => (e.id === emailId && e.status === 'unread' ? { ...e, status: 'read' } : e)),
+        notifications: state.notifications.map((n) => (n.id === `email-${emailId}` ? { ...n, read: true } : n))
+      }))
+      const headers = await getAuthHeaders()
+      await fetch(`${BACKEND_URL}/api/emails/${emailId}/read`, { method: 'POST', headers })
     },
 
     transferEmail: async (emailId: string) => {

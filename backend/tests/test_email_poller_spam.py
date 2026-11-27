@@ -105,3 +105,15 @@ def test_purge_old_logs_deletes_only_entries_older_than_90_days(monkeypatch):
     assert calls[0] == "system_logs" and calls[1][0] == "created_at"
     cutoff = datetime.fromisoformat(calls[1][1])
     assert abs((datetime.now(timezone.utc) - cutoff) - timedelta(days=90)) < timedelta(minutes=1)
+
+
+def test_list_numbers_on_their_own_line_are_joined_to_the_item():
+    from app.services.parser import clean_email_body
+    body = "Hello,\n\n1.\n\nExecutive desk - 2 units\n2.\nChairs - 14 units\n\n-\nDelivery to Dubai\n\nThanks"
+    assert clean_email_body(body) == "Hello,\n\n1. Executive desk - 2 units\n2. Chairs - 14 units\n\n- Delivery to Dubai\n\nThanks"
+
+
+def test_lines_that_merely_start_with_numbers_are_left_alone():
+    from app.services.parser import clean_email_body
+    body = "1. Desk - 2 units\n2. Chair - 3 units\nTotal 5."
+    assert clean_email_body(body) == body

@@ -7,6 +7,9 @@ import {
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
+// Part-file (DXF/STL) measuring is not reliable yet, so the button is hidden.
+const ENABLE_PART_FILES = false
+
 type Category = 'material' | 'labor' | 'other'
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
@@ -511,6 +514,8 @@ export const PipelineWorkspace: React.FC = () => {
 
                     {!activeQuote && !aiProcessing && (
                       <div className="space-y-3">
+                        {/* DXF/STL measuring is hidden until it is fixed; set ENABLE_PART_FILES to show it again. */}
+                        {ENABLE_PART_FILES && (
                         <div className="flex flex-wrap items-center gap-3">
                           <input ref={partFileInput} type="file" accept=".dxf,.stl" className="hidden" onChange={handlePartFile} />
                           <button onClick={() => partFileInput.current?.click()} disabled={isMeasuring} className="btn btn-secondary btn-sm">
@@ -525,6 +530,7 @@ export const PipelineWorkspace: React.FC = () => {
                             Measures cut length, pierces and blank size, or volume and surface area, and adds them to the request.
                           </span>
                         </div>
+                        )}
                         <p className="text-xs text-slate-500">
                           Generate a quote to price this request from your knowledge base. You can edit every figure before sending.
                         </p>

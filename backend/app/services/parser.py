@@ -194,12 +194,40 @@ def html_to_text(markup: str) -> str:
     return "\n".join(out).strip()
 
 
+# A list number or bullet alone on its line: "1.", "2)", "a.", "-", "*", "•", "o"
+_LIST_MARKER_LINE = _re.compile(r"^\s*(\d{1,3}[.)]|[a-zA-Z][.)]|[-*\u2022\u00b7\u25aao])\s*$")
+
+
+def join_list_markers(text: str) -> str:
+    """
+    Outlook and some webmail clients put a list number on one line and the item
+    text on the next (often with a blank line between). Re-join them so
+    "1.\n\nDesk - 2 units" reads "1. Desk - 2 units".
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if _LIST_MARKER_LINE.match(line):
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines) and not _LIST_MARKER_LINE.match(lines[j]):
+                out.append(f"{line.strip()} {lines[j].strip()}")
+                i = j + 1
+                continue
+        out.append(line)
+        i += 1
+    return "\n".join(out)
+
+
 def clean_email_body(plain: str | None, html_body: str | None = None) -> str:
     """Prefers the sender's plain-text part; falls back to converting the HTML part."""
     plain = (plain or "").strip()
     if plain and not looks_like_html(plain):
-        return _INVISIBLE.sub("", plain)
-    return html_to_text(html_body or plain)
+        return join_list_markers(_INVISIBLE.sub("", plain))
+    return join_list_markers(html_to_text(html_body or plain))
 
 
 # ---------------------------------------------------------------- PDF text repair

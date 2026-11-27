@@ -40,3 +40,19 @@ def test_api_docs_hidden_in_production(monkeypatch):
     finally:
         monkeypatch.delenv("ENV")
         importlib.reload(main_module)
+
+
+def test_opening_an_email_marks_only_unread_ones_read(client, monkeypatch):
+    from app.api import emails as emails_api
+    from tests.fake_supabase import FakeSupabase
+    db = FakeSupabase()
+    db.tables["customer_emails"] = [
+        {"id": "e1", "company_id": "c1", "status": "unread"},
+        {"id": "e2", "company_id": "c1", "status": "imported"},
+        {"id": "e3", "company_id": "other", "status": "unread"},
+    ]
+    monkeypatch.setattr(emails_api, "supabase", db)
+    for eid in ("e1", "e2", "e3"):
+        assert client.post(f"/api/emails/{eid}/read", headers=auth("u1")).status_code == 200
+    status = {r["id"]: r["status"] for r in db.tables["customer_emails"]}
+    assert status == {"e1": "read", "e2": "imported", "e3": "unread"}

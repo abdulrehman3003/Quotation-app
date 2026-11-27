@@ -120,7 +120,7 @@ export const LandingPage: React.FC = () => {
         'Several branches or companies',
         'Unlimited users',
         'Higher quote volume to match your business',
-        'Custom pricing rules and part-file costing',
+        'Custom pricing rules',
         'Webhooks into your own systems',
         'Named onboarding contact',
       ],
@@ -386,7 +386,7 @@ export const LandingPage: React.FC = () => {
                     <Inbox className="w-6 h-6" />
                   </div>
                   <h4 className="text-sm font-semibold text-white">1. Enquiry arrives</h4>
-                  <p className="text-xs text-slate-400 mt-2">A WhatsApp message, an email, or a DXF / STL drawing from your customer.</p>
+                  <p className="text-xs text-slate-400 mt-2">A WhatsApp message, an email, or a PDF or spreadsheet attached to it.</p>
                   <div className="flex gap-1.5 mt-3">
                     <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-slate-400">Email</span>
                     <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 border border-slate-800 text-slate-400">WhatsApp</span>

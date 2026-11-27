@@ -55,6 +55,22 @@ def list_emails(current_user: dict = Depends(get_current_user)):
             detail="Failed to retrieve customer emails"
         )
 
+@router.post("/{email_id}/read")
+def mark_email_read(email_id: str, current_user: dict = Depends(get_current_user)):
+    """Marks an unread email as read when it is opened. Other statuses are left alone."""
+    try:
+        supabase.table("customer_emails")\
+            .update({"status": "read"})\
+            .eq("id", email_id)\
+            .eq("company_id", current_user["company_id"])\
+            .eq("status", "unread")\
+            .execute()
+    except Exception as e:
+        logger.error(f"Failed to mark email {email_id} as read: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update the email")
+    return {"status": "read"}
+
+
 @router.post("/{email_id}/transfer")
 def transfer_email_to_leads(email_id: str, current_user: dict = Depends(get_current_user)):
     """

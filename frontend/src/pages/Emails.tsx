@@ -32,13 +32,34 @@ function parseLineTokens(line: string): { type: 'text' | 'url'; content: string 
   return tokens
 }
 
+// A list number or bullet alone on its line ("1.", "2)", "-", "•")
+const LIST_MARKER_LINE = /^\s*(\d{1,3}[.)]|[a-zA-Z][.)]|[-*\u2022\u00b7\u25aao])\s*$/
+
+// Outlook often sends "1." on one line and the item on the next; join them back.
+function joinListMarkers(lines: string[]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (LIST_MARKER_LINE.test(lines[i])) {
+      let j = i + 1
+      while (j < lines.length && !lines[j].trim()) j++
+      if (j < lines.length && !LIST_MARKER_LINE.test(lines[j])) {
+        out.push(`${lines[i].trim()} ${lines[j].trim()}`)
+        i = j
+        continue
+      }
+    }
+    out.push(lines[i])
+  }
+  return out
+}
+
 // Main email body renderer — handles separators, blank lines, URLs, invisible chars
 function renderEmailBody(rawBody: string): React.ReactNode {
   if (!rawBody) return null
 
   // Normalize literal \n escape sequences into real newlines, then strip invisibles
   const normalized = stripInvisible(rawBody.replace(/\\n/g, '\n').replace(/\\r/g, ''))
-  const lines = normalized.split('\n')
+  const lines = joinListMarkers(normalized.split('\n'))
 
   const elements: React.ReactNode[] = []
   let key = 0
@@ -159,6 +180,7 @@ export default function Emails() {
     loadingEmails,
     fetchEmails,
     transferEmail,
+    markEmailRead,
     replyEmail,
     userProfile,
     error
@@ -201,6 +223,8 @@ export default function Emails() {
 
   const selectEmail = (id: string) => {
     setSelectedId(id)
+    const opened = emails.find((e) => e.id === id)
+    if (opened?.status === 'unread') markEmailRead(id).catch(() => {})
     setNotice(null)
     setReplyText('')
   }
@@ -409,7 +433,7 @@ export default function Emails() {
                       </p>
                     )}
                   </div>
-                  {selectedEmail.status === 'unread' && (
+                  {(selectedEmail.status === 'unread' || selectedEmail.status === 'read') && (
                     <button
                       onClick={() => handleTransfer(selectedEmail.id)}
                       disabled={processing}
@@ -456,7 +480,7 @@ export default function Emails() {
 
                   <article className="break-words">{renderEmailBody(selectedEmail.body)}</article>
 
-                  {selectedEmail.status === 'unread' && (
+                  {(selectedEmail.status === 'unread' || selectedEmail.status === 'read') && (
                     <p className="text-xs text-slate-500 border-t border-slate-800 pt-4">
                       Add this message to the pipeline to price it. You can reply once it has been added.
                     </p>
