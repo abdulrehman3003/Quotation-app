@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
-import { useWorkspaceStore } from '../store/workspaceStore'
+import { useWorkspaceStore, chatHasUnread } from '../store/workspaceStore'
 import {
   LayoutDashboard,
   FileSpreadsheet,
@@ -48,6 +48,7 @@ export const Sidebar: React.FC = () => {
     userProfile,
     emails,
     whatsappChats,
+    whatsappSeen,
     notifications,
     markNotificationsAsRead,
     fetchEmails,
@@ -102,7 +103,8 @@ export const Sidebar: React.FC = () => {
   const unreadNotices = companyNotices.filter((n) => !n.read)
   const unreadNotifications = notifications.filter((n) => !n.read).length + unreadNotices.length
   const unreadEmails = emails.filter((e) => e.status === 'unread').length
-  const escalatedChats = whatsappChats.filter((c) => c.status === 'human_required').length
+  // Chats with new customer messages, plus chats waiting for a human
+  const activeChats = whatsappChats.filter((c) => c.status === 'human_required' || chatHasUnread(c, whatsappSeen)).length
 
   const groups: { heading: string; items: NavItem[] }[] = [
     {
@@ -119,7 +121,7 @@ export const Sidebar: React.FC = () => {
       heading: 'Channels',
       items: [
         { label: 'Email', icon: Mail, path: '/emails', count: unreadEmails },
-        { label: 'WhatsApp', icon: MessageSquare, path: '/whatsapp', count: escalatedChats }
+        { label: 'WhatsApp', icon: MessageSquare, path: '/whatsapp', count: activeChats }
       ]
     },
     {

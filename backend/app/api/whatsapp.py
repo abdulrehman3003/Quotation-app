@@ -739,6 +739,30 @@ async def whatsapp_webhook(request: Request):
         logger.error(f"Error handling WhatsApp webhook: {str(e)}")
         return {"status": "error", "detail": "Failed to process message"}
 
+def _attach_last_customer_message(chats: list[dict]) -> None:
+    """Adds last_customer_message / last_customer_message_at to each chat so the
+    dashboard can notify about new inbound WhatsApp messages."""
+    if not chats:
+        return
+    try:
+        res = supabase.table("whatsapp_messages")\
+            .select("chat_id,text,created_at")\
+            .in_("chat_id", [c["id"] for c in chats])\
+            .eq("sender", "customer")\
+            .order("created_at", desc=True)\
+            .limit(1000)\
+            .execute()
+        latest: dict[str, dict] = {}
+        for m in res.data or []:
+            latest.setdefault(m["chat_id"], m)
+        for c in chats:
+            m = latest.get(c["id"])
+            c["last_customer_message"] = m["text"] if m else None
+            c["last_customer_message_at"] = m["created_at"] if m else None
+    except Exception as e:  # notifications are best-effort; never break the chat list
+        logger.warning(f"Could not load last WhatsApp messages: {e}")
+
+
 @router.get("/chats")
 def list_chats(current_user: dict = Depends(get_current_user)):
     """
@@ -750,7 +774,9 @@ def list_chats(current_user: dict = Depends(get_current_user)):
             .eq("company_id", current_user["company_id"])\
             .order("created_at", desc=True)\
             .execute()
-        return response.data
+        chats = response.data or []
+        _attach_last_customer_message(chats)
+        return chats
     except Exception as e:
         logger.error(f"Failed to fetch whatsapp chats: {str(e)}")
         raise HTTPException(

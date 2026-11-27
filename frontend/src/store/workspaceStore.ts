@@ -365,7 +365,33 @@ export interface WhatsAppChat {
   customer_name: string
   status: string // 'active_ai', 'human_required'
   created_at: string
+  last_customer_message?: string | null
+  last_customer_message_at?: string | null
 }
+
+// Per-browser record of the newest customer message the user has seen in each
+// WhatsApp chat, so new inbound messages raise a notification. Storage can be
+// unavailable (private mode), in which case it just lives in memory.
+const WA_SEEN_KEY = 'axrflows-wa-seen'
+let waSeenChecked = false
+const loadWaSeen = (): Record<string, string> | null => {
+  try {
+    const raw = localStorage.getItem(WA_SEEN_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+const saveWaSeen = (seen: Record<string, string>) => {
+  try {
+    localStorage.setItem(WA_SEEN_KEY, JSON.stringify(seen))
+  } catch {
+    // ignore
+  }
+}
+export const chatHasUnread = (chat: WhatsAppChat, seen: Record<string, string>) =>
+  !!chat.last_customer_message_at &&
+  (!seen[chat.id] || new Date(chat.last_customer_message_at) > new Date(seen[chat.id]))
 
 export interface WhatsAppMessage {
   id: string
@@ -383,6 +409,7 @@ interface WorkspaceState {
   // null = not checked yet; false = no mailbox connected in settings
   emailConfigured: boolean | null
   whatsappChats: WhatsAppChat[]
+  whatsappSeen: Record<string, string>
   whatsappMessages: WhatsAppMessage[]
   dispatchedQuotes: any[]
   loadingDispatched: boolean
@@ -524,6 +551,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     emails: [],
     emailConfigured: null,
     whatsappChats: [],
+    whatsappSeen: loadWaSeen() ?? {},
     whatsappMessages: [],
     dispatchedQuotes: [],
     loadingDispatched: false,
@@ -895,8 +923,36 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const res = await fetch(`${BACKEND_URL}/api/whatsapp/chats`, { headers })
         if (!res.ok) throw new Error("Failed to load WhatsApp chats")
         const data = await res.json()
-        set({ whatsappChats: data, loadingChats: false })
-        
+        // First run in this browser: treat existing messages as already seen,
+        // so only messages that arrive from now on raise notifications.
+        let seen = get().whatsappSeen
+        const firstRun = !waSeenChecked && loadWaSeen() === null && Object.keys(seen).length === 0
+        waSeenChecked = true
+        const activeId = get().activeChat?.id
+        let seenChanged = false
+        data.forEach((chat: WhatsAppChat) => {
+          if (chat.last_customer_message_at && (firstRun || chat.id === activeId) && chatHasUnread(chat, seen)) {
+            seen = { ...seen, [chat.id]: chat.last_customer_message_at }
+            seenChanged = true
+          }
+        })
+        if (firstRun || seenChanged) saveWaSeen(seen)
+        set({ whatsappChats: data, whatsappSeen: seen, loadingChats: false })
+
+        // Notify about new inbound messages in chats the user hasn't opened since
+        data.forEach((chat: WhatsAppChat) => {
+          if (chatHasUnread(chat, seen)) {
+            get().addNotification({
+              id: `whatsapp-msg-${chat.id}-${chat.last_customer_message_at}`,
+              title: `New WhatsApp from ${chat.customer_name || chat.phone_number}`,
+              description: chat.last_customer_message || chat.phone_number,
+              type: 'whatsapp',
+              created_at: chat.last_customer_message_at,
+              read: false
+            })
+          }
+        })
+
         // Add notifications for chats in human_required mode
         data.forEach((chat: any) => {
           if (chat.status === 'human_required') {
@@ -917,6 +973,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     setActiveChat: async (chat: WhatsAppChat | null) => {
       set({ activeChat: chat, whatsappMessages: [], error: null })
+      if (chat?.last_customer_message_at) {
+        const seen = { ...get().whatsappSeen, [chat.id]: chat.last_customer_message_at }
+        saveWaSeen(seen)
+        set((state) => ({
+          whatsappSeen: seen,
+          notifications: state.notifications.map((n) =>
+            n.id.startsWith(`whatsapp-msg-${chat.id}-`) ? { ...n, read: true } : n
+          )
+        }))
+      }
       if (chat) {
         await get().fetchChatMessages(chat.id)
       }
