@@ -89,6 +89,15 @@ On a PaaS, set the Dockerfile path to `backend/Dockerfile` and the build context
 
 Health check path: `GET /health`.
 
+### Railway (chosen 2026-11-27)
+
+`railway.json` at the repo root configures the service: Dockerfile `backend/Dockerfile`, health check `/health`, one replica, restart on failure. The container binds to Railway's `$PORT`; `WEB_CONCURRENCY` (default 2) sets the gunicorn worker count. Two workers use about 260 MB.
+
+1. Railway → New Project → Deploy from GitHub repo → `quotation-app`. Leave Root Directory empty (the build context must be the repo root).
+2. Variables: paste the production variables below.
+3. Settings → Networking → Generate Domain (`<name>.up.railway.app`), or add `api.<your-domain>` as a custom domain.
+4. Use the Hobby plan or higher. It doesn't sleep. Don't enable "serverless / app sleeping".
+
 ### Production environment variables
 
 ```env

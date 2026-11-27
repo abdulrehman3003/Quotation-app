@@ -20,8 +20,9 @@ RUN uv sync --frozen
 # Install gunicorn for production process manager
 RUN uv pip install gunicorn
 
-# Expose port
+# Expose port (Railway/Render inject PORT; defaults to 8000 locally)
+ENV PORT=8000 WEB_CONCURRENCY=2
 EXPOSE 8000
 
-# Run backend using gunicorn
-CMD ["/app/.venv/bin/gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]
+# Run backend using gunicorn. Shell form so $PORT / $WEB_CONCURRENCY expand.
+CMD exec /app/.venv/bin/gunicorn app.main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT} --workers ${WEB_CONCURRENCY} --timeout 120
